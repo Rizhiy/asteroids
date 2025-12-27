@@ -1,7 +1,11 @@
+mod color;
+mod framebuffer;
 mod objects;
 mod vector;
 
-use objects::{Asteroid, Color};
+use color::Color;
+use framebuffer::FrameBuffer;
+use objects::Asteroid;
 use pixels::{Pixels, SurfaceTexture};
 use std::io::{self, Write};
 use std::pin::Pin;
@@ -174,10 +178,10 @@ impl InputState {
 ///
 /// IMPORTANT invariants:
 /// - `window` is pinned, so its address won't change.
-/// - `pixels` must be dropped before `window` (field order does that).
+/// - `framebuffer` must be dropped before `window` (field order does that).
 struct RunningState {
-    // Put pixels FIRST so it is dropped BEFORE window.
-    pixels: Pixels<'static>,
+    // Put framebuffer FIRST so it is dropped BEFORE window.
+    framebuffer: FrameBuffer,
     window: Pin<Box<Window>>,
 
     // Game state
@@ -210,8 +214,10 @@ impl RunningState {
             std::mem::transmute::<Pixels<'_>, Pixels<'static>>(pixels)
         };
 
+        let framebuffer = FrameBuffer::new(pixels, WIDTH, HEIGHT);
+
         Self {
-            pixels,
+            framebuffer,
             window,
             world: WorldState::new(),
             input: InputState::new(),
@@ -229,60 +235,30 @@ impl RunningState {
     }
 
     fn resize(&mut self, width: u32, height: u32) {
-        self.pixels.resize_surface(width, height).unwrap();
-    }
-
-    fn set_pixel(frame: &mut [u8], world_pos: Vector, window_pos: Vector, color: Color) {
-        // Convert world coordinates to screen coordinates
-        let screen_pos = world_pos - window_pos;
-
-        if screen_pos.x < 0.0
-            || screen_pos.x >= WIDTH as f32
-            || screen_pos.y < 0.0
-            || screen_pos.y >= HEIGHT as f32
-        {
-            return;
-        }
-        let index = ((screen_pos.y as u32 * WIDTH + screen_pos.x as u32) * 4) as usize;
-        frame[index] = color.r;
-        frame[index + 1] = color.g;
-        frame[index + 2] = color.b;
-        frame[index + 3] = color.a;
-    }
-
-    fn clear_frame(frame: &mut [u8], color: Color) {
-        for px in frame.chunks_exact_mut(4) {
-            px[0] = color.r;
-            px[1] = color.g;
-            px[2] = color.b;
-            px[3] = color.a;
-        }
+        self.framebuffer.resize(width, height).unwrap();
     }
 
     fn draw(&mut self) {
-        let camera_pos = self.input.camera_pos;
-        let frame = self.pixels.frame_mut();
-        Self::clear_frame(frame, Color::BLACK);
+        self.framebuffer.set_camera_pos(self.input.camera_pos);
+        self.framebuffer.clear(Color::BLACK);
 
+        // Draw all world asteroids
         for asteroid in &self.world.asteroids {
-            // TODO: Move this logic inside asteroid
-            let ceil_radius = asteroid.radius().ceil() as i32;
-            let true_radius = asteroid.radius();
-            for x_offset in -ceil_radius..ceil_radius {
-                for y_offset in -ceil_radius..ceil_radius {
-                    let pixel_pos = asteroid.pos()
-                        + vector::Vector {
-                            x: x_offset as f32,
-                            y: y_offset as f32,
-                        };
-                    if (pixel_pos - asteroid.pos()).length() <= true_radius {
-                        Self::set_pixel(frame, pixel_pos, camera_pos, Color::WHITE);
-                    }
-                }
-            }
+            asteroid.draw(&mut self.framebuffer, Color::WHITE);
         }
 
-        self.pixels.render().unwrap();
+        // Draw preview asteroid being created
+        if self.input.button_pressed {
+            let world_pos = self.input.world_pos_from_cursor();
+            let preview = Asteroid::new(
+                world_pos,
+                Vector { x: 0.0, y: 0.0 },
+                self.input.asteroid_size,
+            );
+            preview.draw(&mut self.framebuffer, Color::WHITE);
+        }
+
+        self.framebuffer.render().unwrap();
     }
 
     fn on_release(&mut self) {

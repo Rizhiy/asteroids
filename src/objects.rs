@@ -1,3 +1,4 @@
+use crate::color::Color;
 use crate::vector::Vector;
 use std::f32::consts::PI;
 
@@ -17,6 +18,27 @@ impl Asteroid {
     }
     pub fn radius(self) -> f32 {
         self.size.sqrt() / PI
+    }
+
+    pub fn size(self) -> f32 {
+        self.size
+    }
+
+    pub fn draw(&self, fb: &mut crate::framebuffer::FrameBuffer, color: Color) {
+        let radius = self.radius();
+        let ceil_radius = radius.ceil() as i32;
+        
+        for x_offset in -ceil_radius..ceil_radius {
+            for y_offset in -ceil_radius..ceil_radius {
+                let pixel_pos = self.pos + Vector {
+                    x: x_offset as f32,
+                    y: y_offset as f32,
+                };
+                if (pixel_pos - self.pos).length() <= radius {
+                    fb.set_pixel(pixel_pos, color);
+                }
+            }
+        }
     }
 
     pub fn update(&mut self, others: &Vec<Asteroid>, step: f32) {
@@ -70,24 +92,3 @@ impl Asteroid {
     }
 }
 
-#[derive(Default, Clone, Copy)]
-pub struct Color {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub a: u8,
-}
-
-impl Color {
-    pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self { r, g, b, a }
-    }
-    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b, a: 255 }
-    }
-    pub const BLACK: Self = Self::rgb(0, 0, 0);
-    pub const WHITE: Self = Self::rgb(255, 255, 255);
-    pub const RED: Self = Self::rgb(255, 0, 0);
-    pub const GREEN: Self = Self::rgb(0, 255, 0);
-    pub const BLUE: Self = Self::rgb(0, 0, 255);
-}
