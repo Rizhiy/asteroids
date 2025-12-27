@@ -1,0 +1,9 @@
+[package]
+name = "asteroids"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pixels = "0.15.0"
+wgpu = "28.0.0"
+winit = "0.30"
