@@ -28,7 +28,7 @@ impl Asteroid {
                 continue;
             }
             // Not multiplying by self mass, since we would need to divide by it later
-            let force_magnitude = asteroid.size / (distance * distance);
+            let force_magnitude = asteroid.size / distance;
             let force = direction.norm() * force_magnitude;
             acc += force;
         }

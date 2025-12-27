@@ -37,7 +37,140 @@ impl Default for App {
     }
 }
 
-/// Owns the window and pixels.
+struct WorldState {
+    asteroids: Vec<Asteroid>,
+    last_update_time: std::time::Instant,
+}
+
+impl Default for WorldState {
+    fn default() -> Self {
+        Self {
+            asteroids: Vec::new(),
+            last_update_time: std::time::Instant::now(),
+        }
+    }
+}
+
+impl WorldState {
+    fn new() -> Self {
+        Default::default()
+    }
+
+    fn update(&mut self) {
+        let mut delta = self.last_update_time.elapsed();
+        let tick_duration = std::time::Duration::from_secs_f32(1.0 / TICK_RATE);
+
+        while delta >= tick_duration {
+            let new_asteroids: Vec<Asteroid> = self
+                .asteroids
+                .iter()
+                .map(|asteroid| {
+                    let mut a = *asteroid;
+                    a.update(&self.asteroids, 1.0 / TICK_RATE);
+                    a
+                })
+                .collect();
+            self.asteroids = new_asteroids;
+
+            // Check for collisions and merge asteroids
+            self.check_collisions();
+
+            delta -= tick_duration;
+            self.last_update_time += tick_duration;
+        }
+    }
+
+    fn check_collisions(&mut self) {
+        use std::collections::HashSet;
+
+        let mut to_remove = HashSet::new();
+        let mut to_add = Vec::new();
+
+        // Check all pairs (i, j) where i < j
+        for i in 0..self.asteroids.len() {
+            for j in (i + 1)..self.asteroids.len() {
+                // Skip if already marked for removal
+                if to_remove.contains(&i) || to_remove.contains(&j) {
+                    continue;
+                }
+
+                let a1 = &self.asteroids[i];
+                let a2 = &self.asteroids[j];
+
+                // Check collision
+                if a1.collides_with(a2) {
+                    // Merge them
+                    let merged = a1.merge_with(a2);
+                    to_add.push(merged);
+
+                    // Mark both for removal
+                    to_remove.insert(i);
+                    to_remove.insert(j);
+                }
+            }
+        }
+
+        // Remove using retain with index
+        let mut idx = 0;
+        self.asteroids.retain(|_| {
+            let should_keep = !to_remove.contains(&idx);
+            idx += 1;
+            should_keep
+        });
+
+        self.asteroids.extend(to_add);
+    }
+
+    fn spawn_asteroid(&mut self, pos: Vector, vel: Vector, size: f32) {
+        self.asteroids.push(Asteroid::new(pos, vel, size));
+    }
+}
+
+#[derive(Default)]
+struct InputState {
+    camera_pos: Vector,
+
+    cursor_pos: Vector,
+    button_pressed: bool,
+    asteroid_size: f32,
+
+    key_w_pressed: bool,
+    key_s_pressed: bool,
+    key_a_pressed: bool,
+    key_d_pressed: bool,
+}
+
+impl InputState {
+    fn new() -> Self {
+        Self {
+            asteroid_size: 1.0,
+            ..Default::default()
+        }
+    }
+}
+
+impl InputState {
+    fn update_camera(&mut self) {
+        if self.key_w_pressed {
+            self.camera_pos.y -= CAMERA_SPEED;
+        }
+        if self.key_s_pressed {
+            self.camera_pos.y += CAMERA_SPEED;
+        }
+        if self.key_a_pressed {
+            self.camera_pos.x -= CAMERA_SPEED;
+        }
+        if self.key_d_pressed {
+            self.camera_pos.x += CAMERA_SPEED;
+        }
+    }
+
+    fn world_pos_from_cursor(&self) -> Vector {
+        self.camera_pos + self.cursor_pos
+    }
+}
+
+/// Window and rendering state
 ///
 /// IMPORTANT invariants:
 /// - `window` is pinned, so its address won't change.
@@ -46,18 +179,10 @@ struct RunningState {
     // Put pixels FIRST so it is dropped BEFORE window.
     pixels: Pixels<'static>,
     window: Pin<Box<Window>>,
-    cursor_pos: Vector,
-    window_pos: Vector,
-    asteroids: Vec<Asteroid>,
-    last_update_time: std::time::Instant,
-    // Spawning asteroids
-    button_pressed: bool,
-    asteroid_size: f32,
-    // Camera movement
-    key_w_pressed: bool,
-    key_s_pressed: bool,
-    key_a_pressed: bool,
-    key_d_pressed: bool,
+
+    // Game state
+    world: WorldState,
+    input: InputState,
 }
 
 impl RunningState {
@@ -88,16 +213,8 @@ impl RunningState {
         Self {
             pixels,
             window,
-            cursor_pos: Vector { x: 0.0, y: 0.0 },
-            window_pos: Vector { x: 0.0, y: 0.0 },
-            asteroids: Vec::<Asteroid>::new(),
-            last_update_time: std::time::Instant::now(),
-            button_pressed: false,
-            asteroid_size: 1.0,
-            key_w_pressed: false,
-            key_s_pressed: false,
-            key_a_pressed: false,
-            key_d_pressed: false,
+            world: WorldState::new(),
+            input: InputState::new(),
         }
     }
 
@@ -118,8 +235,12 @@ impl RunningState {
     fn set_pixel(frame: &mut [u8], world_pos: Vector, window_pos: Vector, color: Color) {
         // Convert world coordinates to screen coordinates
         let screen_pos = world_pos - window_pos;
-        
-        if screen_pos.x < 0.0 || screen_pos.x >= WIDTH as f32 || screen_pos.y < 0.0 || screen_pos.y >= HEIGHT as f32 {
+
+        if screen_pos.x < 0.0
+            || screen_pos.x >= WIDTH as f32
+            || screen_pos.y < 0.0
+            || screen_pos.y >= HEIGHT as f32
+        {
             return;
         }
         let index = ((screen_pos.y as u32 * WIDTH + screen_pos.x as u32) * 4) as usize;
@@ -139,11 +260,11 @@ impl RunningState {
     }
 
     fn draw(&mut self) {
-        let window_pos = self.window_pos;
+        let camera_pos = self.input.camera_pos;
         let frame = self.pixels.frame_mut();
         Self::clear_frame(frame, Color::BLACK);
 
-        for asteroid in &self.asteroids {
+        for asteroid in &self.world.asteroids {
             // TODO: Move this logic inside asteroid
             let ceil_radius = asteroid.radius().ceil() as i32;
             let true_radius = asteroid.radius();
@@ -155,7 +276,7 @@ impl RunningState {
                             y: y_offset as f32,
                         };
                     if (pixel_pos - asteroid.pos()).length() <= true_radius {
-                        Self::set_pixel(frame, pixel_pos, window_pos, Color::WHITE);
+                        Self::set_pixel(frame, pixel_pos, camera_pos, Color::WHITE);
                     }
                 }
             }
@@ -165,93 +286,26 @@ impl RunningState {
     }
 
     fn on_release(&mut self) {
-        let asteroid = Asteroid::new(
-            self.window_pos + self.cursor_pos,
-            vector::Vector { x: 0.0, y: 0.0 },
-            self.asteroid_size,
+        let world_pos = self.input.world_pos_from_cursor();
+        self.world.spawn_asteroid(
+            world_pos,
+            Vector { x: 0.0, y: 0.0 },
+            self.input.asteroid_size,
         );
-        self.asteroids.push(asteroid);
-        self.asteroid_size = 1.0;
-    }
-
-    fn update_camera(&mut self) {
-        if self.key_w_pressed {
-            self.window_pos.y -= CAMERA_SPEED;
-        }
-        if self.key_s_pressed {
-            self.window_pos.y += CAMERA_SPEED;
-        }
-        if self.key_a_pressed {
-            self.window_pos.x -= CAMERA_SPEED;
-        }
-        if self.key_d_pressed {
-            self.window_pos.x += CAMERA_SPEED;
-        }
+        self.input.asteroid_size = 1.0;
     }
 
     fn update(&mut self) {
         // Update camera position every frame
-        self.update_camera();
+        self.input.update_camera();
 
-        let mut delta = self.last_update_time.elapsed();
-        let tick_duration = std::time::Duration::from_secs_f32(1.0 / TICK_RATE);
+        // Update world physics
+        self.world.update();
 
-        while delta >= tick_duration {
-            let new_asteroids: Vec<Asteroid> = self
-                .asteroids
-                .iter()
-                .map(|asteroid| {
-                    let mut a = *asteroid;
-                    a.update(&self.asteroids, 1.0 / TICK_RATE);
-                    a
-                })
-                .collect();
-            self.asteroids = new_asteroids;
-
-            // Check for collisions and merge asteroids
-            self.check_collisions();
-
-            delta -= tick_duration;
-            self.last_update_time += tick_duration;
-
-            if self.button_pressed {
-                self.asteroid_size += 1.0;
-            }
+        // Update asteroid size while button held
+        if self.input.button_pressed {
+            self.input.asteroid_size += 1.0;
         }
-    }
-
-    fn check_collisions(&mut self) {
-        let mut to_remove = Vec::new();
-        let mut to_add = Vec::new();
-
-        for i in 0..self.asteroids.len() {
-            for j in (i + 1)..self.asteroids.len() {
-                if to_remove.contains(&i) || to_remove.contains(&j) {
-                    continue;
-                }
-
-                let a1 = &self.asteroids[i];
-                let a2 = &self.asteroids[j];
-
-                if a1.collides_with(a2) {
-                    let merged = a1.merge_with(a2);
-                    to_add.push(merged);
-
-                    to_remove.push(i);
-                    to_remove.push(j);
-                }
-            }
-        }
-
-        to_remove.sort_unstable();
-        to_remove.reverse();
-        to_remove.dedup();
-
-        for index in to_remove {
-            self.asteroids.swap_remove(index);
-        }
-
-        self.asteroids.extend(to_add);
     }
 }
 
@@ -289,7 +343,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                running.cursor_pos = Vector {
+                running.input.cursor_pos = Vector {
                     x: position.x as f32,
                     y: position.y as f32,
                 };
@@ -297,11 +351,11 @@ impl ApplicationHandler for App {
 
             WindowEvent::MouseInput { state, button, .. } => match (state, button) {
                 (ElementState::Pressed, MouseButton::Left) => {
-                    running.button_pressed = true;
+                    running.input.button_pressed = true;
                 }
                 (ElementState::Released, MouseButton::Left) => {
                     running.on_release();
-                    running.button_pressed = false;
+                    running.input.button_pressed = false;
                 }
 
                 _ => {}
@@ -311,10 +365,10 @@ impl ApplicationHandler for App {
                 if let PhysicalKey::Code(keycode) = event.physical_key {
                     let is_pressed = event.state == ElementState::Pressed;
                     match keycode {
-                        KeyCode::KeyW => running.key_w_pressed = is_pressed,
-                        KeyCode::KeyS => running.key_s_pressed = is_pressed,
-                        KeyCode::KeyA => running.key_a_pressed = is_pressed,
-                        KeyCode::KeyD => running.key_d_pressed = is_pressed,
+                        KeyCode::KeyW => running.input.key_w_pressed = is_pressed,
+                        KeyCode::KeyS => running.input.key_s_pressed = is_pressed,
+                        KeyCode::KeyA => running.input.key_a_pressed = is_pressed,
+                        KeyCode::KeyD => running.input.key_d_pressed = is_pressed,
                         _ => {}
                     }
                 }
@@ -331,7 +385,7 @@ impl ApplicationHandler for App {
         print!("\r\x1B[2K"); // clear the line
         print!(
             "FPS: {}",
-            1.0 / running.last_update_time.elapsed().as_secs_f32()
+            1.0 / running.world.last_update_time.elapsed().as_secs_f32()
         );
         io::stdout().flush().unwrap();
         running.update();
