@@ -23,8 +23,8 @@ use winit::{
 const TICK_RATE: f32 = 100.0;
 const CAMERA_SPEED: f32 = 300.0; // pixels per second
 const RANDOM_SPAWN_RATE: f32 = 8.0; // asteroids per second
-const CLEANUP_THRESHOLD_MULTIPLIER: f32 = 10.0; // how many standard deviations before cleanup
-const STATS_UPDATE_RATE: f32 = 10.0; // times per second to update UPS/FPS stats
+const CLEANUP_THRESHOLD_MULTIPLIER: f32 = 15.0; // how many standard deviations before cleanup
+const STATS_UPDATE_RATE: f32 = 5.0; // times per second to update UPS/FPS stats
 
 enum AppState {
     Starting,
@@ -69,9 +69,10 @@ impl WorldState {
         Default::default()
     }
 
-    fn update(&mut self) {
+    fn update(&mut self) -> bool {
         let mut delta = self.last_update_time.elapsed();
         let tick_duration = std::time::Duration::from_secs_f32(1.0 / TICK_RATE);
+        let mut stats_changed = false;
 
         while delta >= tick_duration {
             let new_asteroids: Vec<Asteroid> = self
@@ -102,8 +103,11 @@ impl WorldState {
                     self.update_count as f32 / self.last_ups_time.elapsed().as_secs_f32();
                 self.update_count = 0;
                 self.last_ups_time = std::time::Instant::now();
+                stats_changed = true;
             }
         }
+
+        stats_changed
     }
 
     fn check_collisions(&mut self) {
@@ -309,6 +313,7 @@ struct RunningState {
     frame_count: u32,
     last_fps_time: std::time::Instant,
     frames_per_second: f32,
+    stats_changed: bool,
 
     // Random spawning
     random_spawn_timer: f32,
@@ -328,7 +333,7 @@ impl RunningState {
         let size = w_ref.inner_size();
         let surface = SurfaceTexture::new(size.width, size.height, w_ref);
 
-        // Use PixelsBuilder to set present mode to Mailbox to avoid blocking on Wayland
+        // Use PixelsBuilder to set present mode to Immediate (no vsync) for maximum FPS
         let pixels = pixels::PixelsBuilder::new(size.width, size.height, surface)
             .present_mode(pixels::wgpu::PresentMode::Mailbox)
             .build()
@@ -360,6 +365,7 @@ impl RunningState {
             frames_per_second: 0.0,
             random_spawn_timer: 0.0,
             window_visible: true,
+            stats_changed: false,
         }
     }
 
@@ -408,6 +414,7 @@ impl RunningState {
                 self.frame_count as f32 / self.last_fps_time.elapsed().as_secs_f32();
             self.frame_count = 0;
             self.last_fps_time = std::time::Instant::now();
+            self.stats_changed = true;
         }
     }
 
@@ -471,7 +478,9 @@ impl RunningState {
         }
 
         // Update world physics
-        self.world.update();
+        if self.world.update() {
+            self.stats_changed = true;
+        }
 
         // Update camera to center of mass if tracking is enabled
         if self.input.camera_tracking {
@@ -518,13 +527,16 @@ impl ApplicationHandler for App {
 
         running.update();
 
-        // Print UPS and FPS as integers
-        print!("\r\x1B[2K"); // clear the line
-        print!(
-            "UPS: {} | FPS: {}",
-            running.world.updates_per_second as u32, running.frames_per_second as u32
-        );
-        io::stdout().flush().unwrap();
+        // Print UPS and FPS only when stats have changed (not every frame)
+        if running.stats_changed {
+            print!("\r\x1B[2K"); // clear the line
+            print!(
+                "UPS: {} | FPS: {}",
+                running.world.updates_per_second as u32, running.frames_per_second as u32
+            );
+            io::stdout().flush().unwrap();
+            running.stats_changed = false;
+        }
 
         // Request redraw if window is visible
         if running.window_visible {
