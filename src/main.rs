@@ -14,7 +14,7 @@ use vector::Vector;
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
-    event::{ElementState, MouseButton, WindowEvent},
+    event::{ElementState, MouseButton, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
@@ -22,8 +22,9 @@ use winit::{
 
 const TICK_RATE: f32 = 100.0;
 const CAMERA_SPEED: f32 = 300.0; // pixels per second
-const RANDOM_SPAWN_RATE: f32 = 5.0; // asteroids per second
-const CLEANUP_THRESHOLD_MULTIPLIER: f32 = 30.0; // how many standard deviations before cleanup
+const RANDOM_SPAWN_RATE: f32 = 8.0; // asteroids per second
+const CLEANUP_THRESHOLD_MULTIPLIER: f32 = 10.0; // how many standard deviations before cleanup
+const STATS_UPDATE_RATE: f32 = 10.0; // times per second to update UPS/FPS stats
 
 enum AppState {
     Starting,
@@ -45,13 +46,20 @@ impl Default for App {
 struct WorldState {
     asteroids: Vec<Asteroid>,
     last_update_time: std::time::Instant,
+    update_count: u32,
+    last_ups_time: std::time::Instant,
+    updates_per_second: f32,
 }
 
 impl Default for WorldState {
     fn default() -> Self {
+        let now = std::time::Instant::now();
         Self {
             asteroids: Vec::new(),
-            last_update_time: std::time::Instant::now(),
+            last_update_time: now,
+            update_count: 0,
+            last_ups_time: now,
+            updates_per_second: 0.0,
         }
     }
 }
@@ -85,6 +93,16 @@ impl WorldState {
 
             delta -= tick_duration;
             self.last_update_time += tick_duration;
+
+            // Track updates per second
+            self.update_count += 1;
+            let update_interval = 1.0 / STATS_UPDATE_RATE;
+            if self.last_ups_time.elapsed().as_secs_f32() >= update_interval {
+                self.updates_per_second =
+                    self.update_count as f32 / self.last_ups_time.elapsed().as_secs_f32();
+                self.update_count = 0;
+                self.last_ups_time = std::time::Instant::now();
+            }
         }
     }
 
@@ -288,9 +306,15 @@ struct RunningState {
 
     // Frame timing
     last_frame_time: std::time::Instant,
+    frame_count: u32,
+    last_fps_time: std::time::Instant,
+    frames_per_second: f32,
 
     // Random spawning
     random_spawn_timer: f32,
+
+    // Window state
+    window_visible: bool,
 }
 
 impl RunningState {
@@ -304,7 +328,11 @@ impl RunningState {
         let size = w_ref.inner_size();
         let surface = SurfaceTexture::new(size.width, size.height, w_ref);
 
-        let pixels = Pixels::new(size.width, size.height, surface).unwrap();
+        // Use PixelsBuilder to set present mode to Mailbox to avoid blocking on Wayland
+        let pixels = pixels::PixelsBuilder::new(size.width, size.height, surface)
+            .present_mode(pixels::wgpu::PresentMode::Mailbox)
+            .build()
+            .unwrap();
 
         // `pixels` really borrows `w_ref` which is tied to `window`.
         // We store it as `'static` and uphold that "as-if-'static" by
@@ -320,13 +348,18 @@ impl RunningState {
 
         let framebuffer = FrameBuffer::new(pixels, size.width, size.height);
 
+        let now = std::time::Instant::now();
         Self {
             framebuffer,
             window,
             world: WorldState::new(),
             input: InputState::new(),
-            last_frame_time: std::time::Instant::now(),
+            last_frame_time: now,
+            frame_count: 0,
+            last_fps_time: now,
+            frames_per_second: 0.0,
             random_spawn_timer: 0.0,
+            window_visible: true,
         }
     }
 
@@ -366,6 +399,16 @@ impl RunningState {
         }
 
         self.framebuffer.render().unwrap();
+
+        // Track frames per second
+        self.frame_count += 1;
+        let update_interval = 1.0 / STATS_UPDATE_RATE;
+        if self.last_fps_time.elapsed().as_secs_f32() >= update_interval {
+            self.frames_per_second =
+                self.frame_count as f32 / self.last_fps_time.elapsed().as_secs_f32();
+            self.frame_count = 0;
+            self.last_fps_time = std::time::Instant::now();
+        }
     }
 
     fn on_press(&mut self) {
@@ -466,6 +509,29 @@ impl RunningState {
 }
 
 impl ApplicationHandler for App {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: StartCause) {
+        // Update physics continuously - called at start of every event loop iteration
+        // This runs even when window is hidden/minimized (unlike about_to_wait which can be blocked by present)
+        let AppState::Running(running) = &mut self.state else {
+            return;
+        };
+
+        running.update();
+
+        // Print UPS and FPS as integers
+        print!("\r\x1B[2K"); // clear the line
+        print!(
+            "UPS: {} | FPS: {}",
+            running.world.updates_per_second as u32, running.frames_per_second as u32
+        );
+        io::stdout().flush().unwrap();
+
+        // Request redraw if window is visible
+        if running.window_visible {
+            running.window().request_redraw();
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if matches!(self.state, AppState::Running(_)) {
             return;
@@ -554,20 +620,19 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
-                running.draw();
-                running.window_mut().request_redraw(); // keep animating for now
+                // Only draw and present when window is visible
+                // This prevents blocking on present() when window is hidden on Wayland
+                if running.window_visible {
+                    running.draw();
+                }
+            }
+
+            WindowEvent::Occluded(occluded) => {
+                running.window_visible = !occluded;
             }
 
             _ => {}
         }
-
-        print!("\r\x1B[2K"); // clear the line
-        print!(
-            "FPS: {}",
-            1.0 / running.world.last_update_time.elapsed().as_secs_f32()
-        );
-        io::stdout().flush().unwrap();
-        running.update();
     }
 }
 
