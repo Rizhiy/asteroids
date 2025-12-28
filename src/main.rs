@@ -7,6 +7,7 @@ use color::Color;
 use framebuffer::FrameBuffer;
 use objects::Asteroid;
 use pixels::{Pixels, SurfaceTexture};
+use std::collections::HashSet;
 use std::io::{self, Write};
 use std::pin::Pin;
 use vector::Vector;
@@ -19,10 +20,10 @@ use winit::{
     window::{Window, WindowId},
 };
 
-const WIDTH: u32 = 1920 / 2;
-const HEIGHT: u32 = 1080 / 2;
 const TICK_RATE: f32 = 100.0;
-const CAMERA_SPEED: f32 = 5.0; // pixels per frame
+const CAMERA_SPEED: f32 = 300.0; // pixels per second
+const RANDOM_SPAWN_RATE: f32 = 5.0; // asteroids per second
+const CLEANUP_THRESHOLD_MULTIPLIER: f32 = 30.0; // how many standard deviations before cleanup
 
 enum AppState {
     Starting,
@@ -79,6 +80,9 @@ impl WorldState {
             // Check for collisions and merge asteroids
             self.check_collisions();
 
+            // Clean up asteroids that are too far from center of mass
+            self.cleanup_distant_asteroids();
+
             delta -= tick_duration;
             self.last_update_time += tick_duration;
         }
@@ -128,20 +132,75 @@ impl WorldState {
     fn spawn_asteroid(&mut self, pos: Vector, vel: Vector, size: f32) {
         self.asteroids.push(Asteroid::new(pos, vel, size));
     }
+
+    fn calculate_center_of_mass(&self) -> Vector {
+        if self.asteroids.is_empty() {
+            return Vector { x: 0.0, y: 0.0 };
+        }
+
+        let mut total_mass = 0.0;
+        let mut weighted_pos = Vector { x: 0.0, y: 0.0 };
+
+        for asteroid in &self.asteroids {
+            let mass = asteroid.size(); // size represents area/mass
+            total_mass += mass;
+            weighted_pos = weighted_pos + asteroid.pos() * mass;
+        }
+
+        weighted_pos / total_mass
+    }
+
+    fn calculate_mass_variance(&self, center: Vector) -> f32 {
+        if self.asteroids.is_empty() {
+            return 0.0;
+        }
+
+        let mut total_mass = 0.0;
+        let mut weighted_variance = 0.0;
+
+        for asteroid in &self.asteroids {
+            let mass = asteroid.size();
+            let distance = (asteroid.pos() - center).length();
+            total_mass += mass;
+            weighted_variance += mass * distance * distance;
+        }
+
+        if total_mass > 0.0 {
+            (weighted_variance / total_mass).sqrt()
+        } else {
+            0.0
+        }
+    }
+
+    fn cleanup_distant_asteroids(&mut self) {
+        let center = self.calculate_center_of_mass();
+        let std_dev = self.calculate_mass_variance(center);
+        let threshold = std_dev * CLEANUP_THRESHOLD_MULTIPLIER;
+
+        self.asteroids
+            .retain(|asteroid| (asteroid.pos() - center).length() <= threshold);
+    }
 }
 
 #[derive(Default)]
 struct InputState {
     camera_pos: Vector,
+    camera_vel: Vector,
 
     cursor_pos: Vector,
-    button_pressed: bool,
-    asteroid_size: f32,
 
-    key_w_pressed: bool,
-    key_s_pressed: bool,
-    key_a_pressed: bool,
-    key_d_pressed: bool,
+    // Asteroid creation state
+    creating_asteroid: bool,
+    asteroid_start_pos: Vector,
+    asteroid_size: f32,
+    asteroid_hold_time: f32,
+
+    // Input state
+    keys_pressed: HashSet<KeyCode>,
+    mouse_buttons_pressed: HashSet<MouseButton>,
+
+    // Camera tracking
+    camera_tracking: bool,
 }
 
 impl InputState {
@@ -151,22 +210,61 @@ impl InputState {
             ..Default::default()
         }
     }
+
+    fn start_creating_asteroid(&mut self, screen_pos: Vector) {
+        self.creating_asteroid = true;
+        self.asteroid_start_pos = screen_pos;
+        self.asteroid_size = 1.0;
+        self.asteroid_hold_time = 0.0;
+    }
+
+    fn update_asteroid_size(&mut self, dt: f32) {
+        if self.creating_asteroid && self.mouse_buttons_pressed.contains(&MouseButton::Left) {
+            self.asteroid_hold_time += dt;
+            // Quadratic growth: size = 1 + (10*t)^2 for faster growth
+            let scaled_time = self.asteroid_hold_time * 10.0;
+            self.asteroid_size = 1.0 + scaled_time * scaled_time;
+        }
+    }
+
+    fn finish_creating_asteroid(&mut self, screen_pos: Vector) -> (Vector, Vector, f32) {
+        // Convert screen positions to world positions
+        let world_start_pos = self.camera_pos + self.asteroid_start_pos;
+        let world_end_pos = self.camera_pos + screen_pos;
+
+        let pos = world_start_pos;
+        // Add camera velocity to asteroid velocity
+        let vel = (world_end_pos - world_start_pos) + self.camera_vel;
+        let size = self.asteroid_size;
+
+        self.creating_asteroid = false;
+        self.asteroid_size = 1.0;
+        self.asteroid_hold_time = 0.0;
+
+        (pos, vel, size)
+    }
 }
 
 impl InputState {
-    fn update_camera(&mut self) {
-        if self.key_w_pressed {
-            self.camera_pos.y -= CAMERA_SPEED;
+    fn update_camera(&mut self, dt: f32) {
+        // Set velocity first (in pixels per second)
+        self.camera_vel = Vector { x: 0.0, y: 0.0 };
+
+        if self.keys_pressed.contains(&KeyCode::KeyW) {
+            self.camera_vel.y -= CAMERA_SPEED;
         }
-        if self.key_s_pressed {
-            self.camera_pos.y += CAMERA_SPEED;
+        if self.keys_pressed.contains(&KeyCode::KeyS) {
+            self.camera_vel.y += CAMERA_SPEED;
         }
-        if self.key_a_pressed {
-            self.camera_pos.x -= CAMERA_SPEED;
+        if self.keys_pressed.contains(&KeyCode::KeyA) {
+            self.camera_vel.x -= CAMERA_SPEED;
         }
-        if self.key_d_pressed {
-            self.camera_pos.x += CAMERA_SPEED;
+        if self.keys_pressed.contains(&KeyCode::KeyD) {
+            self.camera_vel.x += CAMERA_SPEED;
         }
+
+        // Update position based on velocity and time
+        self.camera_pos = self.camera_pos + self.camera_vel * dt;
     }
 
     fn world_pos_from_cursor(&self) -> Vector {
@@ -187,6 +285,12 @@ struct RunningState {
     // Game state
     world: WorldState,
     input: InputState,
+
+    // Frame timing
+    last_frame_time: std::time::Instant,
+
+    // Random spawning
+    random_spawn_timer: f32,
 }
 
 impl RunningState {
@@ -200,7 +304,7 @@ impl RunningState {
         let size = w_ref.inner_size();
         let surface = SurfaceTexture::new(size.width, size.height, w_ref);
 
-        let pixels = Pixels::new(WIDTH, HEIGHT, surface).unwrap();
+        let pixels = Pixels::new(size.width, size.height, surface).unwrap();
 
         // `pixels` really borrows `w_ref` which is tied to `window`.
         // We store it as `'static` and uphold that "as-if-'static" by
@@ -214,13 +318,15 @@ impl RunningState {
             std::mem::transmute::<Pixels<'_>, Pixels<'static>>(pixels)
         };
 
-        let framebuffer = FrameBuffer::new(pixels, WIDTH, HEIGHT);
+        let framebuffer = FrameBuffer::new(pixels, size.width, size.height);
 
         Self {
             framebuffer,
             window,
             world: WorldState::new(),
             input: InputState::new(),
+            last_frame_time: std::time::Instant::now(),
+            random_spawn_timer: 0.0,
         }
     }
 
@@ -248,8 +354,9 @@ impl RunningState {
         }
 
         // Draw preview asteroid being created
-        if self.input.button_pressed {
-            let world_pos = self.input.world_pos_from_cursor();
+        if self.input.creating_asteroid {
+            // Convert screen position to world position for drawing
+            let world_pos = self.input.camera_pos + self.input.asteroid_start_pos;
             let preview = Asteroid::new(
                 world_pos,
                 Vector { x: 0.0, y: 0.0 },
@@ -261,26 +368,99 @@ impl RunningState {
         self.framebuffer.render().unwrap();
     }
 
-    fn on_release(&mut self) {
-        let world_pos = self.input.world_pos_from_cursor();
-        self.world.spawn_asteroid(
-            world_pos,
-            Vector { x: 0.0, y: 0.0 },
-            self.input.asteroid_size,
-        );
-        self.input.asteroid_size = 1.0;
+    fn on_press(&mut self) {
+        if !self.input.creating_asteroid {
+            // First click - start creating asteroid at this screen position
+            let screen_pos = self.input.cursor_pos;
+            self.input.start_creating_asteroid(screen_pos);
+        } else if !self
+            .input
+            .mouse_buttons_pressed
+            .contains(&MouseButton::Left)
+        {
+            // Second click (button not held) - finish creating asteroid with velocity
+            let screen_pos = self.input.cursor_pos;
+            let (pos, vel, size) = self.input.finish_creating_asteroid(screen_pos);
+            self.world.spawn_asteroid(pos, vel, size);
+        }
+    }
+
+    fn spawn_random_asteroid(&mut self) {
+        // Get actual window size
+        let window_size = self.window().inner_size();
+        let width = window_size.width as f32;
+        let height = window_size.height as f32;
+
+        // Random position within visible screen area
+        let x = self.input.camera_pos.x + fastrand::f32() * width;
+        let y = self.input.camera_pos.y + fastrand::f32() * height;
+        let pos = Vector { x, y };
+
+        // Random velocity: random direction and magnitude (10-50 pixels/sec)
+        let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
+        let speed = 10.0 + fastrand::f32() * 40.0;
+        let random_vel = Vector {
+            x: angle.cos() * speed,
+            y: angle.sin() * speed,
+        };
+
+        // Add camera velocity to asteroid velocity
+        let vel = random_vel + self.input.camera_vel;
+
+        // Random size (5-30)
+        let size = 5.0 + fastrand::f32() * 25.0;
+
+        self.world.spawn_asteroid(pos, vel, size);
     }
 
     fn update(&mut self) {
-        // Update camera position every frame
-        self.input.update_camera();
+        // Calculate actual frame time
+        let now = std::time::Instant::now();
+        let dt = now.duration_since(self.last_frame_time).as_secs_f32();
+        self.last_frame_time = now;
+
+        // Update camera position every frame (if not tracking)
+        if !self.input.camera_tracking {
+            self.input.update_camera(dt);
+        } else {
+            // Reset camera velocity when not manually moving
+            self.input.camera_vel = Vector { x: 0.0, y: 0.0 };
+        }
 
         // Update world physics
         self.world.update();
 
-        // Update asteroid size while button held
-        if self.input.button_pressed {
-            self.input.asteroid_size += 1.0;
+        // Update camera to center of mass if tracking is enabled
+        if self.input.camera_tracking {
+            let center = self.world.calculate_center_of_mass();
+            let window_size = self.window().inner_size();
+            let half_width = window_size.width as f32 / 2.0;
+            let half_height = window_size.height as f32 / 2.0;
+            let new_camera_pos = center
+                - Vector {
+                    x: half_width,
+                    y: half_height,
+                };
+
+            // Calculate camera velocity from tracking movement
+            self.input.camera_vel = (new_camera_pos - self.input.camera_pos) / dt;
+            self.input.camera_pos = new_camera_pos;
+        }
+
+        // Update asteroid size while button held (quadratic growth)
+        self.input.update_asteroid_size(dt);
+
+        // Random spawning when R key is held
+        if self.input.keys_pressed.contains(&KeyCode::KeyR) {
+            self.random_spawn_timer += dt;
+            let spawn_interval = 1.0 / RANDOM_SPAWN_RATE;
+            while self.random_spawn_timer >= spawn_interval {
+                self.spawn_random_asteroid();
+                self.random_spawn_timer -= spawn_interval;
+            }
+        } else {
+            // Reset timer when key is released
+            self.random_spawn_timer = 0.0;
         }
     }
 }
@@ -291,11 +471,21 @@ impl ApplicationHandler for App {
             return;
         }
 
+        // Get primary monitor to calculate half screen size
+        let monitor = event_loop
+            .primary_monitor()
+            .or_else(|| event_loop.available_monitors().next())
+            .expect("No monitor found");
+
+        let screen_size = monitor.size();
+        let width = screen_size.width / 2;
+        let height = screen_size.height / 2;
+
         let window = event_loop
             .create_window(
                 Window::default_attributes()
-                    .with_title("pixels + winit 0.30 (Pin + unsafe)")
-                    .with_inner_size(PhysicalSize::new(WIDTH, HEIGHT)),
+                    .with_title("Asteroids")
+                    .with_inner_size(PhysicalSize::new(width, height)),
             )
             .unwrap();
 
@@ -325,27 +515,40 @@ impl ApplicationHandler for App {
                 };
             }
 
-            WindowEvent::MouseInput { state, button, .. } => match (state, button) {
-                (ElementState::Pressed, MouseButton::Left) => {
-                    running.input.button_pressed = true;
+            WindowEvent::MouseInput { state, button, .. } => match state {
+                ElementState::Pressed => {
+                    if button == MouseButton::Left {
+                        running.on_press();
+                    }
+                    running.input.mouse_buttons_pressed.insert(button);
                 }
-                (ElementState::Released, MouseButton::Left) => {
-                    running.on_release();
-                    running.input.button_pressed = false;
+                ElementState::Released => {
+                    running.input.mouse_buttons_pressed.remove(&button);
                 }
-
-                _ => {}
             },
 
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(keycode) = event.physical_key {
-                    let is_pressed = event.state == ElementState::Pressed;
-                    match keycode {
-                        KeyCode::KeyW => running.input.key_w_pressed = is_pressed,
-                        KeyCode::KeyS => running.input.key_s_pressed = is_pressed,
-                        KeyCode::KeyA => running.input.key_a_pressed = is_pressed,
-                        KeyCode::KeyD => running.input.key_d_pressed = is_pressed,
-                        _ => {}
+                    match event.state {
+                        ElementState::Pressed => {
+                            running.input.keys_pressed.insert(keycode);
+
+                            // Handle T key to start tracking
+                            if keycode == KeyCode::KeyT {
+                                running.input.camera_tracking = true;
+                            }
+
+                            // Stop tracking when WASD is pressed
+                            if matches!(
+                                keycode,
+                                KeyCode::KeyW | KeyCode::KeyS | KeyCode::KeyA | KeyCode::KeyD
+                            ) {
+                                running.input.camera_tracking = false;
+                            }
+                        }
+                        ElementState::Released => {
+                            running.input.keys_pressed.remove(&keycode);
+                        }
                     }
                 }
             }
