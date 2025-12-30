@@ -9,6 +9,7 @@ pub struct FrameBuffer {
     width: u32,
     height: u32,
     camera_pos: Vector,
+    zoom: f32,
     font: Font,
 }
 
@@ -23,12 +24,17 @@ impl FrameBuffer {
             width,
             height,
             camera_pos: Vector { x: 0.0, y: 0.0 },
+            zoom: 1.0,
             font,
         }
     }
 
     pub fn set_camera_pos(&mut self, camera_pos: Vector) {
         self.camera_pos = camera_pos;
+    }
+
+    pub fn set_zoom(&mut self, zoom: f32) {
+        self.zoom = zoom;
     }
 
     pub fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
@@ -42,23 +48,46 @@ impl FrameBuffer {
             .map_err(|e| format!("{:?}", e))
     }
 
-    pub fn set_pixel(&mut self, world_pos: Vector, color: Color) {
-        let screen_pos = world_pos - self.camera_pos;
-
-        if screen_pos.x < 0.0
-            || screen_pos.x >= self.width as f32
-            || screen_pos.y < 0.0
-            || screen_pos.y >= self.height as f32
+    fn set_screen_pixel(&mut self, screen_x: i32, screen_y: i32, color: Color) {
+        if screen_x < 0
+            || screen_x >= self.width as i32
+            || screen_y < 0
+            || screen_y >= self.height as i32
         {
             return;
         }
 
         let frame = self.pixels.frame_mut();
-        let index = ((screen_pos.y as u32 * self.width + screen_pos.x as u32) * 4) as usize;
+        let index = ((screen_y as u32 * self.width + screen_x as u32) * 4) as usize;
         frame[index] = color.r;
         frame[index + 1] = color.g;
         frame[index + 2] = color.b;
         frame[index + 3] = color.a;
+    }
+
+    pub fn draw_circle(&mut self, world_pos: Vector, world_radius: f32, color: Color) {
+        let screen_center = Vector {
+            x: self.width as f32 / 2.0,
+            y: self.height as f32 / 2.0,
+        };
+        let screen_pos = (world_pos - self.camera_pos) * self.zoom + screen_center;
+        let screen_radius = world_radius * self.zoom;
+
+        let ceil_radius = screen_radius.ceil() as i32;
+        let center_x = screen_pos.x.round() as i32;
+        let center_y = screen_pos.y.round() as i32;
+
+        for y_offset in -ceil_radius..=ceil_radius {
+            for x_offset in -ceil_radius..=ceil_radius {
+                let dx = x_offset as f32;
+                let dy = y_offset as f32;
+                let distance = (dx * dx + dy * dy).sqrt();
+
+                if distance <= screen_radius {
+                    self.set_screen_pixel(center_x + x_offset, center_y + y_offset, color);
+                }
+            }
+        }
     }
 
     pub fn clear(&mut self, color: Color) {

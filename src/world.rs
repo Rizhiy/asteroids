@@ -155,12 +155,4 @@ impl WorldState {
     pub fn updates_per_second(&self) -> f32 {
         self.updates_per_second
     }
-
-    pub fn tick_rate(&self) -> f32 {
-        self.tick_rate
-    }
-
-    pub fn cleanup_threshold_multiplier(&self) -> f32 {
-        self.cleanup_threshold_multiplier
-    }
 }

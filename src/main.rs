@@ -8,7 +8,7 @@ use color::Color;
 use framebuffer::FrameBuffer;
 use objects::Asteroid;
 use pixels::{Pixels, SurfaceTexture};
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 use std::pin::Pin;
 use vector::Vector;
 use winit::{
@@ -57,6 +57,7 @@ struct InputState {
     pub speed_multiplier: f32,
     previous_speed: f32,
     camera_tracking: bool,
+    pub zoom: f32,
 }
 
 impl InputState {
@@ -65,6 +66,7 @@ impl InputState {
             asteroid_size: 1.0,
             speed_multiplier: 1.0,
             previous_speed: 1.0,
+            zoom: 1.0,
             ..Default::default()
         }
     }
@@ -96,9 +98,31 @@ impl InputState {
         }
     }
 
-    fn start_creating_asteroid(&mut self, screen_pos: Vector) {
+    fn zoom_in(&mut self) {
+        self.zoom *= 1.2;
+        if self.zoom > 10.0 {
+            self.zoom = 10.0;
+        }
+    }
+
+    fn zoom_out(&mut self) {
+        self.zoom /= 1.2;
+        if self.zoom < 0.01 {
+            self.zoom = 0.01;
+        }
+    }
+
+    fn reset_zoom(&mut self) {
+        self.zoom = 1.0;
+    }
+
+    fn start_creating_asteroid(&mut self, screen_pos: Vector, window_size: (u32, u32)) {
         self.creating_asteroid = true;
-        self.asteroid_start_pos = screen_pos;
+        let screen_center = Vector {
+            x: window_size.0 as f32 / 2.0,
+            y: window_size.1 as f32 / 2.0,
+        };
+        self.asteroid_start_pos = (screen_pos - screen_center) / self.zoom + self.camera_pos;
         self.asteroid_size = 1.0;
         self.asteroid_hold_time = 0.0;
     }
@@ -111,12 +135,19 @@ impl InputState {
         }
     }
 
-    fn finish_creating_asteroid(&mut self, screen_pos: Vector) -> (Vector, Vector, f32) {
-        let world_start_pos = self.camera_pos + self.asteroid_start_pos;
-        let world_end_pos = self.camera_pos + screen_pos;
+    fn finish_creating_asteroid(
+        &mut self,
+        screen_pos: Vector,
+        window_size: (u32, u32),
+    ) -> (Vector, Vector, f32) {
+        let screen_center = Vector {
+            x: window_size.0 as f32 / 2.0,
+            y: window_size.1 as f32 / 2.0,
+        };
+        let world_end_pos = (screen_pos - screen_center) / self.zoom + self.camera_pos;
 
-        let pos = world_start_pos;
-        let vel = (world_end_pos - world_start_pos) + self.camera_vel;
+        let pos = self.asteroid_start_pos;
+        let vel = (world_end_pos - self.asteroid_start_pos) + self.camera_vel;
         let size = self.asteroid_size;
 
         self.creating_asteroid = false;
@@ -131,17 +162,19 @@ impl InputState {
     fn update_camera(&mut self, dt: f32) {
         self.camera_vel = Vector { x: 0.0, y: 0.0 };
 
+        let speed = CAMERA_SPEED / self.zoom;
+
         if self.keys_pressed.contains(&KeyCode::KeyW) {
-            self.camera_vel.y -= CAMERA_SPEED;
+            self.camera_vel.y -= speed;
         }
         if self.keys_pressed.contains(&KeyCode::KeyS) {
-            self.camera_vel.y += CAMERA_SPEED;
+            self.camera_vel.y += speed;
         }
         if self.keys_pressed.contains(&KeyCode::KeyA) {
-            self.camera_vel.x -= CAMERA_SPEED;
+            self.camera_vel.x -= speed;
         }
         if self.keys_pressed.contains(&KeyCode::KeyD) {
-            self.camera_vel.x += CAMERA_SPEED;
+            self.camera_vel.x += speed;
         }
 
         self.camera_pos = self.camera_pos + self.camera_vel * dt;
@@ -216,6 +249,7 @@ impl RunningState {
 impl RunningState {
     fn draw(&mut self) {
         self.framebuffer.set_camera_pos(self.input.camera_pos);
+        self.framebuffer.set_zoom(self.input.zoom);
         self.framebuffer.clear(Color::BLACK);
 
         for asteroid in &self.world.asteroids {
@@ -223,9 +257,8 @@ impl RunningState {
         }
 
         if self.input.creating_asteroid {
-            let world_pos = self.input.camera_pos + self.input.asteroid_start_pos;
             let preview = Asteroid::new(
-                world_pos,
+                self.input.asteroid_start_pos,
                 Vector { x: 0.0, y: 0.0 },
                 self.input.asteroid_size,
             );
@@ -242,7 +275,10 @@ impl RunningState {
         self.framebuffer
             .draw_text(&stats_text, text_pos, 16.0, Color::WHITE);
 
-        let speed_text = format!("Speed: {:.1}x", self.input.speed_multiplier);
+        let speed_text = format!(
+            "Speed: {:.1}x | Zoom: {:.2}x",
+            self.input.speed_multiplier, self.input.zoom
+        );
         let window_size = self.window().inner_size();
         let text_width = speed_text.len() as f32 * 10.0;
         let speed_pos = Vector {
@@ -268,25 +304,30 @@ impl RunningState {
     fn on_press(&mut self) {
         if !self.input.creating_asteroid {
             let screen_pos = self.input.cursor_pos;
-            self.input.start_creating_asteroid(screen_pos);
+            let window_size = self.window().inner_size();
+            self.input
+                .start_creating_asteroid(screen_pos, (window_size.width, window_size.height));
         } else if !self
             .input
             .mouse_buttons_pressed
             .contains(&MouseButton::Left)
         {
             let screen_pos = self.input.cursor_pos;
-            let (pos, vel, size) = self.input.finish_creating_asteroid(screen_pos);
+            let window_size = self.window().inner_size();
+            let (pos, vel, size) = self
+                .input
+                .finish_creating_asteroid(screen_pos, (window_size.width, window_size.height));
             self.world.spawn_asteroid(pos, vel, size);
         }
     }
 
     fn spawn_random_asteroid(&mut self) {
         let window_size = self.window().inner_size();
-        let width = window_size.width as f32;
-        let height = window_size.height as f32;
+        let width = window_size.width as f32 / self.input.zoom;
+        let height = window_size.height as f32 / self.input.zoom;
 
-        let x = self.input.camera_pos.x + fastrand::f32() * width;
-        let y = self.input.camera_pos.y + fastrand::f32() * height;
+        let x = self.input.camera_pos.x + (fastrand::f32() - 0.5) * width;
+        let y = self.input.camera_pos.y + (fastrand::f32() - 0.5) * height;
         let pos = Vector { x, y };
 
         let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
@@ -306,6 +347,8 @@ impl RunningState {
         let now = std::time::Instant::now();
         let dt = now.duration_since(self.last_frame_time).as_secs_f32();
         self.last_frame_time = now;
+        let elapsed = self.last_update_time.elapsed();
+        let update_start = std::time::Instant::now();
 
         if !self.input.camera_tracking {
             self.input.update_camera(dt);
@@ -313,27 +356,19 @@ impl RunningState {
             self.input.camera_vel = Vector { x: 0.0, y: 0.0 };
         }
 
-        let elapsed = self.last_update_time.elapsed().as_secs_f32();
+        let mut update_secs = 0.0;
+
         if self.input.speed_multiplier != 0.0 {
-            let scaled_time = elapsed * self.input.speed_multiplier;
-            let scaled_updated_time = self.world.update(scaled_time);
-            self.last_update_time += std::time::Duration::from_secs_f32(
-                scaled_updated_time / self.input.speed_multiplier,
-            );
-        } else {
-            self.last_update_time += std::time::Duration::from_secs_f32(elapsed);
+            // Calculate how much we should update the simulation by
+            let scaled_time = elapsed.as_secs_f32() * self.input.speed_multiplier;
+            let scaled_update_time = self.world.update(scaled_time);
+            update_secs = scaled_update_time / self.input.speed_multiplier;
         }
+        let update_time = Duration::from_secs_f32(update_secs);
 
         if self.input.camera_tracking {
             let center = self.world.calculate_center_of_mass(true);
-            let window_size = self.window().inner_size();
-            let half_width = window_size.width as f32 / 2.0;
-            let half_height = window_size.height as f32 / 2.0;
-            let new_camera_pos = center
-                - Vector {
-                    x: half_width,
-                    y: half_height,
-                };
+            let new_camera_pos = center;
 
             self.input.camera_vel = (new_camera_pos - self.input.camera_pos) / dt;
             self.input.camera_pos = new_camera_pos;
@@ -356,6 +391,15 @@ impl RunningState {
         } else {
             self.random_spawn_timer = 0.0;
             self.random_spawn_hold_time = 0.0;
+        }
+
+        // If it takes longer to simulate certain amount of world time than how much we need to simulate, the simulation will always try to catch up
+        // This prevents spiraling when the simulation is too heavy
+        let update_duration = update_start.elapsed();
+        if update_time > Duration::ZERO && update_duration > update_time {
+            self.last_update_time = std::time::Instant::now();
+        } else {
+            self.last_update_time += update_time;
         }
     }
 }
@@ -433,6 +477,20 @@ impl ApplicationHandler for App {
                 }
             },
 
+            WindowEvent::MouseWheel { delta, .. } => {
+                use winit::event::MouseScrollDelta;
+                let delta_y = match delta {
+                    MouseScrollDelta::LineDelta(_x, y) => y,
+                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                };
+
+                if delta_y > 0.0 {
+                    running.input.zoom_in();
+                } else if delta_y < 0.0 {
+                    running.input.zoom_out();
+                }
+            }
+
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(keycode) = event.physical_key {
                     match event.state {
@@ -447,6 +505,10 @@ impl ApplicationHandler for App {
                             if keycode == KeyCode::KeyP {
                                 running.input.toggle_pause();
                                 running.stats_changed = true;
+                            }
+
+                            if keycode == KeyCode::KeyZ {
+                                running.input.reset_zoom();
                             }
 
                             let shift_pressed =
