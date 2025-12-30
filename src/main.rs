@@ -325,7 +325,7 @@ impl RunningState {
         }
 
         if self.input.camera_tracking {
-            let center = self.world.calculate_center_of_mass();
+            let center = self.world.calculate_center_of_mass(true);
             let window_size = self.window().inner_size();
             let half_width = window_size.width as f32 / 2.0;
             let half_height = window_size.height as f32 / 2.0;

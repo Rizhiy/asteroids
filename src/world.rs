@@ -20,7 +20,7 @@ impl Default for WorldState {
             asteroids: Vec::new(),
             world_time: 0.0,
             tick_rate: 100.0,
-            cleanup_threshold_multiplier: 15.0,
+            cleanup_threshold_multiplier: 10.0,
             update_count: 0,
             last_ups_time: std::time::Instant::now(),
             updates_per_second: 0.0,
@@ -104,7 +104,7 @@ impl WorldState {
         self.asteroids.push(Asteroid::new(pos, vel, size));
     }
 
-    pub fn calculate_center_of_mass(&self) -> Vector {
+    pub fn calculate_center_of_mass(&self, weighted: bool) -> Vector {
         if self.asteroids.is_empty() {
             return Vector { x: 0.0, y: 0.0 };
         }
@@ -113,7 +113,7 @@ impl WorldState {
         let mut weighted_pos = Vector { x: 0.0, y: 0.0 };
 
         for asteroid in &self.asteroids {
-            let mass = asteroid.size();
+            let mass = if weighted { asteroid.size() } else { 1.0 };
             total_mass += mass;
             weighted_pos = weighted_pos + asteroid.pos() * mass;
         }
@@ -121,7 +121,7 @@ impl WorldState {
         weighted_pos / total_mass
     }
 
-    fn calculate_mass_variance(&self, center: Vector) -> f32 {
+    fn calculate_mass_std(&self, center: Vector, weighted: bool) -> f32 {
         if self.asteroids.is_empty() {
             return 0.0;
         }
@@ -130,7 +130,7 @@ impl WorldState {
         let mut weighted_variance = 0.0;
 
         for asteroid in &self.asteroids {
-            let mass = asteroid.size();
+            let mass = if weighted { asteroid.size() } else { 1.0 };
             let distance = (asteroid.pos() - center).length();
             total_mass += mass;
             weighted_variance += mass * distance * distance;
@@ -144,8 +144,8 @@ impl WorldState {
     }
 
     fn cleanup_distant_asteroids(&mut self) {
-        let center = self.calculate_center_of_mass();
-        let std_dev = self.calculate_mass_variance(center);
+        let center = self.calculate_center_of_mass(true);
+        let std_dev = self.calculate_mass_std(center, false);
         let threshold = std_dev * self.cleanup_threshold_multiplier;
 
         self.asteroids
