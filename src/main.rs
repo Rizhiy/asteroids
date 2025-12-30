@@ -8,7 +8,6 @@ use framebuffer::FrameBuffer;
 use objects::Asteroid;
 use pixels::{Pixels, SurfaceTexture};
 use std::collections::HashSet;
-use std::io::{self, Write};
 use std::pin::Pin;
 use vector::Vector;
 use winit::{
@@ -22,7 +21,8 @@ use winit::{
 
 const TICK_RATE: f32 = 100.0;
 const CAMERA_SPEED: f32 = 300.0; // pixels per second
-const RANDOM_SPAWN_RATE: f32 = 8.0; // asteroids per second
+const RANDOM_SPAWN_RATE_INITIAL: f32 = 10.0; // initial asteroids per second
+const RANDOM_SPAWN_RATE_INCREASE: f32 = 2.0; // increase per second of holding
 const CLEANUP_THRESHOLD_MULTIPLIER: f32 = 15.0; // how many standard deviations before cleanup
 const STATS_UPDATE_RATE: f32 = 5.0; // times per second to update UPS/FPS stats
 
@@ -49,6 +49,7 @@ struct WorldState {
     update_count: u32,
     last_ups_time: std::time::Instant,
     updates_per_second: f32,
+    speed_multiplier: f32,
 }
 
 impl Default for WorldState {
@@ -60,6 +61,7 @@ impl Default for WorldState {
             update_count: 0,
             last_ups_time: now,
             updates_per_second: 0.0,
+            speed_multiplier: 1.0,
         }
     }
 }
@@ -70,9 +72,14 @@ impl WorldState {
     }
 
     fn update(&mut self) -> bool {
-        let mut delta = self.last_update_time.elapsed();
+        // Scale elapsed time by speed multiplier
+        let elapsed = self.last_update_time.elapsed();
+        let mut delta = elapsed.mul_f32(self.speed_multiplier);
         let tick_duration = std::time::Duration::from_secs_f32(1.0 / TICK_RATE);
         let mut stats_changed = false;
+
+        // Track how much simulated time we actually processed
+        let initial_delta = delta;
 
         while delta >= tick_duration {
             let new_asteroids: Vec<Asteroid> = self
@@ -93,7 +100,6 @@ impl WorldState {
             self.cleanup_distant_asteroids();
 
             delta -= tick_duration;
-            self.last_update_time += tick_duration;
 
             // Track updates per second
             self.update_count += 1;
@@ -105,6 +111,16 @@ impl WorldState {
                 self.last_ups_time = std::time::Instant::now();
                 stats_changed = true;
             }
+        }
+
+        // Calculate how much simulated time we processed
+        let simulated_time_processed = initial_delta - delta;
+
+        // Only increment last_update_time by the actual (unscaled) time that corresponds
+        // to the simulated time we processed
+        if self.speed_multiplier > 0.0 {
+            let actual_time_processed = simulated_time_processed.div_f32(self.speed_multiplier);
+            self.last_update_time += actual_time_processed;
         }
 
         stats_changed
@@ -202,6 +218,30 @@ impl WorldState {
         self.asteroids
             .retain(|asteroid| (asteroid.pos() - center).length() <= threshold);
     }
+
+    fn increase_speed(&mut self) {
+        self.speed_multiplier *= 1.5;
+        // Cap at 10x
+        if self.speed_multiplier > 10.0 {
+            self.speed_multiplier = 10.0;
+        }
+    }
+
+    fn decrease_speed(&mut self) {
+        self.speed_multiplier /= 1.5;
+        // Minimum 0.1x
+        if self.speed_multiplier < 0.1 {
+            self.speed_multiplier = 0.1;
+        }
+    }
+
+    fn reset_speed(&mut self) {
+        self.speed_multiplier = 1.0;
+    }
+
+    fn get_speed_multiplier(&self) -> f32 {
+        self.speed_multiplier
+    }
 }
 
 #[derive(Default)]
@@ -288,10 +328,6 @@ impl InputState {
         // Update position based on velocity and time
         self.camera_pos = self.camera_pos + self.camera_vel * dt;
     }
-
-    fn world_pos_from_cursor(&self) -> Vector {
-        self.camera_pos + self.cursor_pos
-    }
 }
 
 /// Window and rendering state
@@ -317,6 +353,7 @@ struct RunningState {
 
     // Random spawning
     random_spawn_timer: f32,
+    random_spawn_hold_time: f32,
 
     // Window state
     window_visible: bool,
@@ -364,6 +401,7 @@ impl RunningState {
             last_fps_time: now,
             frames_per_second: 0.0,
             random_spawn_timer: 0.0,
+            random_spawn_hold_time: 0.0,
             window_visible: true,
             stats_changed: false,
         }
@@ -414,6 +452,18 @@ impl RunningState {
         let text_pos = Vector { x: 10.0, y: 10.0 };
         self.framebuffer
             .draw_text(&stats_text, text_pos, 16.0, Color::WHITE);
+
+        // Draw speed multiplier in top-right corner
+        let speed_text = format!("Speed: {:.1}x", self.world.get_speed_multiplier());
+        let window_size = self.window().inner_size();
+        // Approximate text width (assuming ~10 pixels per character for 16pt font)
+        let text_width = speed_text.len() as f32 * 10.0;
+        let speed_pos = Vector {
+            x: window_size.width as f32 - text_width - 10.0,
+            y: 10.0,
+        };
+        self.framebuffer
+            .draw_text(&speed_text, speed_pos, 16.0, Color::WHITE);
 
         self.framebuffer.render().unwrap();
 
@@ -516,14 +566,22 @@ impl RunningState {
         // Random spawning when R key is held
         if self.input.keys_pressed.contains(&KeyCode::KeyR) {
             self.random_spawn_timer += dt;
-            let spawn_interval = 1.0 / RANDOM_SPAWN_RATE;
+            self.random_spawn_hold_time += dt;
+
+            // Calculate current spawn rate based on hold time
+            // Starts at 10/sec, increases by 2/sec for each second held
+            let current_spawn_rate = RANDOM_SPAWN_RATE_INITIAL
+                + (self.random_spawn_hold_time * RANDOM_SPAWN_RATE_INCREASE);
+
+            let spawn_interval = 1.0 / current_spawn_rate;
             while self.random_spawn_timer >= spawn_interval {
                 self.spawn_random_asteroid();
                 self.random_spawn_timer -= spawn_interval;
             }
         } else {
-            // Reset timer when key is released
+            // Reset timers when key is released
             self.random_spawn_timer = 0.0;
+            self.random_spawn_hold_time = 0.0;
         }
     }
 }
@@ -537,17 +595,6 @@ impl ApplicationHandler for App {
         };
 
         running.update();
-
-        // Print UPS and FPS only when stats have changed (not every frame)
-        if running.stats_changed {
-            print!("\r\x1B[2K"); // clear the line
-            print!(
-                "UPS: {} | FPS: {}",
-                running.world.updates_per_second as u32, running.frames_per_second as u32
-            );
-            io::stdout().flush().unwrap();
-            running.stats_changed = false;
-        }
 
         // Request redraw if window is visible
         if running.window_visible {
@@ -625,6 +672,29 @@ impl ApplicationHandler for App {
                             // Handle T key to start tracking
                             if keycode == KeyCode::KeyT {
                                 running.input.camera_tracking = true;
+                            }
+
+                            // Handle +/- keys to adjust simulation speed
+                            // + key (Shift + =) increases speed
+                            let shift_pressed =
+                                running.input.keys_pressed.contains(&KeyCode::ShiftLeft)
+                                    || running.input.keys_pressed.contains(&KeyCode::ShiftRight);
+
+                            if (keycode == KeyCode::Equal && shift_pressed)
+                                || keycode == KeyCode::NumpadAdd
+                            {
+                                running.world.increase_speed();
+                                running.stats_changed = true;
+                            }
+                            // = key (without shift) resets speed to 1.0x
+                            else if keycode == KeyCode::Equal {
+                                running.world.reset_speed();
+                                running.stats_changed = true;
+                            }
+                            // - key decreases speed
+                            if keycode == KeyCode::Minus || keycode == KeyCode::NumpadSubtract {
+                                running.world.decrease_speed();
+                                running.stats_changed = true;
                             }
 
                             // Stop tracking when WASD is pressed
