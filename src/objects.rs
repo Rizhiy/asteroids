@@ -16,6 +16,11 @@ impl Asteroid {
     pub fn pos(&self) -> Vector {
         self.pos
     }
+
+    pub fn vel(&self) -> Vector {
+        self.vel
+    }
+
     pub fn radius(self) -> f32 {
         self.size.sqrt() / PI
     }
@@ -50,7 +55,6 @@ impl Asteroid {
             if distance < (self.radius() + asteroid.radius()) {
                 continue;
             }
-            // Not multiplying by self mass, since we would need to divide by it later
             let force_magnitude = asteroid.size / distance;
             let force = direction.norm() * force_magnitude;
             acc += force;
@@ -59,19 +63,15 @@ impl Asteroid {
         self.pos += self.vel * step;
     }
 
-    /// Check if this asteroid collides with another
     pub fn collides_with(&self, other: &Asteroid) -> bool {
         (self.pos - other.pos).length() <= (self.radius() + other.radius())
     }
 
-    /// Merge this asteroid with another, preserving momentum and size
     pub fn merge_with(&self, other: &Asteroid) -> Asteroid {
-        // Size represents area (mass is proportional to area in 2D)
         let mass1 = self.size;
         let mass2 = other.size;
         let total_mass = mass1 + mass2;
 
-        // Preserve momentum: p = m * v
         let momentum_x = mass1 * self.vel.x + mass2 * other.vel.x;
         let momentum_y = mass1 * self.vel.y + mass2 * other.vel.y;
 
@@ -80,10 +80,8 @@ impl Asteroid {
             y: momentum_y / total_mass,
         };
 
-        // Combine sizes (areas)
         let new_size = self.size + other.size;
 
-        // Position at center of mass
         let new_pos = Vector {
             x: (mass1 * self.pos.x + mass2 * other.pos.x) / total_mass,
             y: (mass1 * self.pos.y + mass2 * other.pos.y) / total_mass,
