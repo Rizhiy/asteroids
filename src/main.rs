@@ -404,6 +404,17 @@ impl RunningState {
             preview.draw(&mut self.framebuffer, Color::WHITE);
         }
 
+        // Draw stats text in screen space (top-left corner)
+        let stats_text = format!(
+            "FPS: {} | UPS: {} | Asteroids: {}",
+            self.frames_per_second as u32,
+            self.world.updates_per_second as u32,
+            self.world.asteroids.len()
+        );
+        let text_pos = Vector { x: 10.0, y: 10.0 };
+        self.framebuffer
+            .draw_text(&stats_text, text_pos, 16.0, Color::WHITE);
+
         self.framebuffer.render().unwrap();
 
         // Track frames per second

@@ -27,13 +27,14 @@ impl Asteroid {
     pub fn draw(&self, fb: &mut crate::framebuffer::FrameBuffer, color: Color) {
         let radius = self.radius();
         let ceil_radius = radius.ceil() as i32;
-        
+
         for x_offset in -ceil_radius..ceil_radius {
             for y_offset in -ceil_radius..ceil_radius {
-                let pixel_pos = self.pos + Vector {
-                    x: x_offset as f32,
-                    y: y_offset as f32,
-                };
+                let pixel_pos = self.pos
+                    + Vector {
+                        x: x_offset as f32,
+                        y: y_offset as f32,
+                    };
                 if (pixel_pos - self.pos).length() <= radius {
                     fb.set_pixel(pixel_pos, color);
                 }
@@ -91,4 +92,3 @@ impl Asteroid {
         Asteroid::new(new_pos, new_vel, new_size)
     }
 }
-
