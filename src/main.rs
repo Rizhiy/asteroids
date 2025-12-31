@@ -33,6 +33,26 @@ fn power_law_sample(min_value: f32, alpha: f32) -> f32 {
     min_value * (1.0 - u).powf(-1.0 / alpha)
 }
 
+fn format_time(seconds: f32) -> String {
+    let total_seconds = seconds as i64;
+    let days = total_seconds / (24 * 3600);
+    let remainder = total_seconds % (24 * 3600);
+    let hours = remainder / 3600;
+    let remainder = remainder % 3600;
+    let minutes = remainder / 60;
+    let secs = remainder % 60;
+
+    if days > 0 {
+        format!("{}d {}h {}m {}s", days, hours, minutes, secs)
+    } else if hours > 0 {
+        format!("{}h {}m {}s", hours, minutes, secs)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, secs)
+    } else {
+        format!("{}s", secs)
+    }
+}
+
 enum AppState {
     Starting,
     Running(RunningState),
@@ -264,14 +284,22 @@ impl RunningState {
         }
 
         let stats_text = format!(
-            "FPS: {} | UPS: {} | Asteroids: {}",
+            "FPS: {} | UPS: {}",
             self.frames_per_second as u32,
-            self.world.updates_per_second() as u32,
-            self.world.asteroids.len()
+            self.world.updates_per_second() as u32
         );
         let text_pos = vec2(10.0, 10.0);
         self.framebuffer
             .draw_text(&stats_text, text_pos, 16.0, Color::WHITE);
+
+        let time_text = format!(
+            "Time: {} | Asteroids: {}",
+            format_time(self.world.world_time),
+            self.world.asteroids.len()
+        );
+        let time_pos = vec2(10.0, 30.0);
+        self.framebuffer
+            .draw_text(&time_text, time_pos, 16.0, Color::WHITE);
 
         let speed_text = format!(
             "Speed: {:.1}x | Zoom: {:.2}x",
