@@ -9,6 +9,7 @@ use glam::{Vec2, vec2};
 use objects::Asteroid;
 use pixels::{Pixels, SurfaceTexture};
 use std::pin::Pin;
+use std::time::Instant;
 use std::{collections::HashSet, time::Duration};
 use winit::{
     application::ApplicationHandler,
@@ -24,6 +25,12 @@ const CAMERA_SPEED: f32 = 300.0;
 const RANDOM_SPAWN_RATE_INITIAL: f32 = 10.0;
 const RANDOM_SPAWN_RATE_INCREASE: f32 = 2.0;
 const STATS_UPDATE_RATE: f32 = 5.0;
+const FPS_TARGET: f32 = 60.0;
+
+fn power_law_sample(min_value: f32, alpha: f32) -> f32 {
+    let u = fastrand::f32();
+    min_value * (1.0 - u).powf(-1.0 / alpha)
+}
 
 enum AppState {
     Starting,
@@ -97,18 +104,24 @@ impl InputState {
         }
     }
 
-    fn zoom_in(&mut self) {
-        self.zoom *= 1.2;
-        if self.zoom > 10.0 {
-            self.zoom = 10.0;
-        }
+    fn screen_to_world(&self, screen_pos: Vec2, window_size: (u32, u32)) -> Vec2 {
+        let screen_center = vec2(window_size.0 as f32 / 2.0, window_size.1 as f32 / 2.0);
+        (screen_pos - screen_center) / self.zoom + self.camera_pos
     }
 
-    fn zoom_out(&mut self) {
-        self.zoom /= 1.2;
-        if self.zoom < 0.01 {
-            self.zoom = 0.01;
-        }
+    fn apply_zoom(&mut self, cursor_pos: Vec2, window_size: (u32, u32), zoom_factor: f32) {
+        // Calculate world position under cursor before zoom
+        let world_pos_before = self.screen_to_world(cursor_pos, window_size);
+
+        // Apply zoom
+        self.zoom *= zoom_factor;
+        self.zoom = self.zoom.clamp(0.01, 10.0);
+
+        // Calculate where cursor would be in world coords with new zoom if camera stayed same
+        let world_pos_after = self.screen_to_world(cursor_pos, window_size);
+
+        // Adjust camera to keep world position under cursor constant
+        self.camera_pos += world_pos_before - world_pos_after;
     }
 
     fn reset_zoom(&mut self) {
@@ -179,12 +192,12 @@ struct RunningState {
     window: Pin<Box<Window>>,
     world: WorldState,
     input: InputState,
-    last_frame_time: std::time::Instant,
+    last_frame_time: Instant,
     frame_count: u32,
-    last_fps_time: std::time::Instant,
+    last_fps_time: Instant,
     frames_per_second: f32,
     stats_changed: bool,
-    last_update_time: std::time::Instant,
+    last_update_time: Instant,
     random_spawn_timer: f32,
     random_spawn_hold_time: f32,
     window_visible: bool,
@@ -208,7 +221,7 @@ impl RunningState {
 
         let framebuffer = FrameBuffer::new(pixels, size.width, size.height);
 
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         Self {
             framebuffer,
             window,
@@ -286,7 +299,7 @@ impl RunningState {
             self.frames_per_second =
                 self.frame_count as f32 / self.last_fps_time.elapsed().as_secs_f32();
             self.frame_count = 0;
-            self.last_fps_time = std::time::Instant::now();
+            self.last_fps_time = Instant::now();
             self.stats_changed = true;
         }
     }
@@ -321,21 +334,34 @@ impl RunningState {
         let pos = vec2(x, y);
 
         let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
-        let speed = 10.0 + fastrand::f32() * 40.0;
-        let random_vel = vec2(angle.cos() * speed, angle.sin() * speed);
 
+        // Power law distribution for speed: alpha=1.354 gives ~1% with speed > 30
+        let speed = power_law_sample(1.0, 1.354).min(100.0);
+        let random_vel = vec2(angle.cos() * speed, angle.sin() * speed);
         let vel = random_vel + self.input.camera_vel;
-        let size = 5.0 + fastrand::f32() * 25.0;
+
+        // Power law distribution for size: alpha=0.667 gives ~1% with size > 1000
+        let size = power_law_sample(1.0, 0.667).min(10000.0);
 
         self.world.spawn_asteroid(pos, vel, size);
     }
 
     fn update(&mut self) {
-        let now = std::time::Instant::now();
-        let dt = now.duration_since(self.last_frame_time).as_secs_f32();
-        self.last_frame_time = now;
+        let mut dt = Instant::now()
+            .duration_since(self.last_frame_time)
+            .as_secs_f32();
+
+        let target_frame_time = 1.0 / FPS_TARGET;
+        if dt < target_frame_time {
+            let sleep_duration = std::time::Duration::from_secs_f32(target_frame_time - dt);
+            std::thread::sleep(sleep_duration);
+            dt = Instant::now()
+                .duration_since(self.last_frame_time)
+                .as_secs_f32();
+        }
+        self.last_frame_time = Instant::now();
         let elapsed = self.last_update_time.elapsed();
-        let update_start = std::time::Instant::now();
+        let update_start = Instant::now();
 
         if !self.input.camera_tracking {
             self.input.update_camera(dt);
@@ -384,7 +410,7 @@ impl RunningState {
         // This prevents spiraling when the simulation is too heavy
         let update_duration = update_start.elapsed();
         if update_time > Duration::ZERO && update_duration > update_time {
-            self.last_update_time = std::time::Instant::now();
+            self.last_update_time = Instant::now();
         } else {
             self.last_update_time += update_time;
         }
@@ -468,10 +494,16 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
                 };
 
-                if delta_y > 0.0 {
-                    running.input.zoom_in();
-                } else if delta_y < 0.0 {
-                    running.input.zoom_out();
+                if delta_y != 0.0 {
+                    let window_size = running.window().inner_size();
+                    let cursor_pos = running.input.cursor_pos;
+                    let zoom_factor = if delta_y > 0.0 { 1.2 } else { 1.0 / 1.2 };
+
+                    running.input.apply_zoom(
+                        cursor_pos,
+                        (window_size.width, window_size.height),
+                        zoom_factor,
+                    );
                 }
             }
 

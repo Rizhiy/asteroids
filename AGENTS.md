@@ -37,7 +37,6 @@
 - **Start with the simplest solution** - Resist the urge to add abstractions
 - **Listen to feedback** - If told something is getting too complex, stop and simplify.
 - If a file was modified, and contains implementation different from how you left it, it was probably modified by other developers with a good reason. Adjust to it, rather than trying to revert to your own implementation.
-- Run `rustfmt` after you have made all of your changes.
 
 ### Commenting
 
@@ -49,3 +48,7 @@
 - Tests should run quickly
 - **Don't create complex mocking infrastructure unless specifically requested**
 - Test the actual implementation, not simulated versions
+
+## Project specific rules
+
+- Run `rustfmt` after you have made all of your changes.
