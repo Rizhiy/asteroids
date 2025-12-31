@@ -361,7 +361,7 @@ impl RunningState {
             self.input.camera_vel = vec2(0.0, 0.0);
         }
 
-        let mut update_secs = 0.0;
+        let mut update_secs = elapsed.as_secs_f32();
 
         if self.input.speed_multiplier != 0.0 {
             // Calculate how much we should update the simulation by
