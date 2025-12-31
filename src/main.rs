@@ -26,6 +26,7 @@ const RANDOM_SPAWN_RATE_INITIAL: f32 = 10.0;
 const RANDOM_SPAWN_RATE_INCREASE: f32 = 2.0;
 const STATS_UPDATE_RATE: f32 = 5.0;
 const FPS_TARGET: f32 = 60.0;
+const SPEED_ADJUST_FACTOR: f32 = 1.5;
 
 fn power_law_sample(min_value: f32, alpha: f32) -> f32 {
     let u = fastrand::f32();
@@ -77,18 +78,9 @@ impl InputState {
         }
     }
 
-    fn increase_speed(&mut self) {
-        self.speed_multiplier *= 1.5;
-        if self.speed_multiplier > 10.0 {
-            self.speed_multiplier = 10.0;
-        }
-    }
-
-    fn decrease_speed(&mut self) {
-        self.speed_multiplier /= 1.5;
-        if self.speed_multiplier < 0.1 {
-            self.speed_multiplier = 0.1;
-        }
+    fn adjust_speed(&mut self, factor: f32) {
+        self.speed_multiplier *= factor;
+        self.speed_multiplier = self.speed_multiplier.clamp(0.1, 100.0);
     }
 
     fn reset_speed(&mut self) {
@@ -534,14 +526,14 @@ impl ApplicationHandler for App {
                             if (keycode == KeyCode::Equal && shift_pressed)
                                 || keycode == KeyCode::NumpadAdd
                             {
-                                running.input.increase_speed();
+                                running.input.adjust_speed(SPEED_ADJUST_FACTOR);
                                 running.stats_changed = true;
                             } else if keycode == KeyCode::Equal {
                                 running.input.reset_speed();
                                 running.stats_changed = true;
                             }
                             if keycode == KeyCode::Minus || keycode == KeyCode::NumpadSubtract {
-                                running.input.decrease_speed();
+                                running.input.adjust_speed(1.0 / SPEED_ADJUST_FACTOR);
                                 running.stats_changed = true;
                             }
 
