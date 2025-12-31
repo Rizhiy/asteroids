@@ -1,5 +1,4 @@
 pub mod color;
 pub mod framebuffer;
 pub mod objects;
-pub mod vector;
 pub mod world;

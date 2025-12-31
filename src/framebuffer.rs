@@ -1,14 +1,14 @@
 use crate::color::Color;
-use crate::vector::Vector;
 use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
 use fontdue::{Font, FontSettings};
+use glam::{Vec2, vec2};
 use pixels::Pixels;
 
 pub struct FrameBuffer {
     pixels: Pixels<'static>,
     width: u32,
     height: u32,
-    camera_pos: Vector,
+    camera_pos: Vec2,
     zoom: f32,
     font: Font,
 }
@@ -23,13 +23,13 @@ impl FrameBuffer {
             pixels,
             width,
             height,
-            camera_pos: Vector { x: 0.0, y: 0.0 },
+            camera_pos: vec2(0.0, 0.0),
             zoom: 1.0,
             font,
         }
     }
 
-    pub fn set_camera_pos(&mut self, camera_pos: Vector) {
+    pub fn set_camera_pos(&mut self, camera_pos: Vec2) {
         self.camera_pos = camera_pos;
     }
 
@@ -65,11 +65,8 @@ impl FrameBuffer {
         frame[index + 3] = color.a;
     }
 
-    pub fn draw_circle(&mut self, world_pos: Vector, world_radius: f32, color: Color) {
-        let screen_center = Vector {
-            x: self.width as f32 / 2.0,
-            y: self.height as f32 / 2.0,
-        };
+    pub fn draw_circle(&mut self, world_pos: Vec2, world_radius: f32, color: Color) {
+        let screen_center = vec2(self.width as f32 / 2.0, self.height as f32 / 2.0);
         let screen_pos = (world_pos - self.camera_pos) * self.zoom + screen_center;
         let screen_radius = world_radius * self.zoom;
 
@@ -104,7 +101,7 @@ impl FrameBuffer {
         self.pixels.render()
     }
 
-    pub fn draw_text(&mut self, text: &str, screen_pos: Vector, font_size: f32, color: Color) {
+    pub fn draw_text(&mut self, text: &str, screen_pos: Vec2, font_size: f32, color: Color) {
         let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
         layout.reset(&LayoutSettings {
             x: screen_pos.x,

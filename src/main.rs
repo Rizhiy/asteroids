@@ -1,16 +1,15 @@
 mod color;
 mod framebuffer;
 mod objects;
-mod vector;
 mod world;
 
 use color::Color;
 use framebuffer::FrameBuffer;
+use glam::{Vec2, vec2};
 use objects::Asteroid;
 use pixels::{Pixels, SurfaceTexture};
-use std::{collections::HashSet, time::Duration};
 use std::pin::Pin;
-use vector::Vector;
+use std::{collections::HashSet, time::Duration};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -45,11 +44,11 @@ impl Default for App {
 
 #[derive(Default)]
 struct InputState {
-    camera_pos: Vector,
-    camera_vel: Vector,
-    cursor_pos: Vector,
+    camera_pos: Vec2,
+    camera_vel: Vec2,
+    cursor_pos: Vec2,
     creating_asteroid: bool,
-    asteroid_start_pos: Vector,
+    asteroid_start_pos: Vec2,
     asteroid_size: f32,
     asteroid_hold_time: f32,
     keys_pressed: HashSet<KeyCode>,
@@ -116,12 +115,9 @@ impl InputState {
         self.zoom = 1.0;
     }
 
-    fn start_creating_asteroid(&mut self, screen_pos: Vector, window_size: (u32, u32)) {
+    fn start_creating_asteroid(&mut self, screen_pos: Vec2, window_size: (u32, u32)) {
         self.creating_asteroid = true;
-        let screen_center = Vector {
-            x: window_size.0 as f32 / 2.0,
-            y: window_size.1 as f32 / 2.0,
-        };
+        let screen_center = vec2(window_size.0 as f32 / 2.0, window_size.1 as f32 / 2.0);
         self.asteroid_start_pos = (screen_pos - screen_center) / self.zoom + self.camera_pos;
         self.asteroid_size = 1.0;
         self.asteroid_hold_time = 0.0;
@@ -137,13 +133,10 @@ impl InputState {
 
     fn finish_creating_asteroid(
         &mut self,
-        screen_pos: Vector,
+        screen_pos: Vec2,
         window_size: (u32, u32),
-    ) -> (Vector, Vector, f32) {
-        let screen_center = Vector {
-            x: window_size.0 as f32 / 2.0,
-            y: window_size.1 as f32 / 2.0,
-        };
+    ) -> (Vec2, Vec2, f32) {
+        let screen_center = vec2(window_size.0 as f32 / 2.0, window_size.1 as f32 / 2.0);
         let world_end_pos = (screen_pos - screen_center) / self.zoom + self.camera_pos;
 
         let pos = self.asteroid_start_pos;
@@ -160,7 +153,7 @@ impl InputState {
 
 impl InputState {
     fn update_camera(&mut self, dt: f32) {
-        self.camera_vel = Vector { x: 0.0, y: 0.0 };
+        self.camera_vel = vec2(0.0, 0.0);
 
         let speed = CAMERA_SPEED / self.zoom;
 
@@ -259,7 +252,7 @@ impl RunningState {
         if self.input.creating_asteroid {
             let preview = Asteroid::new(
                 self.input.asteroid_start_pos,
-                Vector { x: 0.0, y: 0.0 },
+                vec2(0.0, 0.0),
                 self.input.asteroid_size,
             );
             preview.draw(&mut self.framebuffer, Color::WHITE);
@@ -271,7 +264,7 @@ impl RunningState {
             self.world.updates_per_second() as u32,
             self.world.asteroids.len()
         );
-        let text_pos = Vector { x: 10.0, y: 10.0 };
+        let text_pos = vec2(10.0, 10.0);
         self.framebuffer
             .draw_text(&stats_text, text_pos, 16.0, Color::WHITE);
 
@@ -281,10 +274,7 @@ impl RunningState {
         );
         let window_size = self.window().inner_size();
         let text_width = speed_text.len() as f32 * 10.0;
-        let speed_pos = Vector {
-            x: window_size.width as f32 - text_width - 10.0,
-            y: 10.0,
-        };
+        let speed_pos = vec2(window_size.width as f32 - text_width - 10.0, 10.0);
         self.framebuffer
             .draw_text(&speed_text, speed_pos, 16.0, Color::WHITE);
 
@@ -328,14 +318,11 @@ impl RunningState {
 
         let x = self.input.camera_pos.x + (fastrand::f32() - 0.5) * width;
         let y = self.input.camera_pos.y + (fastrand::f32() - 0.5) * height;
-        let pos = Vector { x, y };
+        let pos = vec2(x, y);
 
         let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
         let speed = 10.0 + fastrand::f32() * 40.0;
-        let random_vel = Vector {
-            x: angle.cos() * speed,
-            y: angle.sin() * speed,
-        };
+        let random_vel = vec2(angle.cos() * speed, angle.sin() * speed);
 
         let vel = random_vel + self.input.camera_vel;
         let size = 5.0 + fastrand::f32() * 25.0;
@@ -353,7 +340,7 @@ impl RunningState {
         if !self.input.camera_tracking {
             self.input.update_camera(dt);
         } else {
-            self.input.camera_vel = Vector { x: 0.0, y: 0.0 };
+            self.input.camera_vel = vec2(0.0, 0.0);
         }
 
         let mut update_secs = 0.0;
@@ -459,10 +446,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                running.input.cursor_pos = Vector {
-                    x: position.x as f32,
-                    y: position.y as f32,
-                };
+                running.input.cursor_pos = vec2(position.x as f32, position.y as f32);
             }
 
             WindowEvent::MouseInput { state, button, .. } => match state {

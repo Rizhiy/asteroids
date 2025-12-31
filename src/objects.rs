@@ -1,19 +1,19 @@
 use crate::color::Color;
-use crate::vector::Vector;
+use glam::{Vec2, vec2};
 use std::f32::consts::PI;
 
 #[derive(Default, Clone, Copy, Debug)]
 pub struct Asteroid {
-    pos: Vector,
-    vel: Vector,
+    pos: Vec2,
+    vel: Vec2,
     size: f32,
 }
 
 impl Asteroid {
-    pub fn new(pos: Vector, vel: Vector, size: f32) -> Self {
+    pub fn new(pos: Vec2, vel: Vec2, size: f32) -> Self {
         Self { pos, vel, size }
     }
-    pub fn pos(&self) -> Vector {
+    pub fn pos(&self) -> Vec2 {
         self.pos
     }
 
@@ -30,7 +30,7 @@ impl Asteroid {
     }
 
     pub fn update(&mut self, others: &Vec<Asteroid>, step: f32) {
-        let mut acc = Vector { x: 0.0, y: 0.0 };
+        let mut acc = vec2(0.0, 0.0);
         for asteroid in others {
             let direction = asteroid.pos - self.pos;
             let distance = direction.length();
@@ -38,7 +38,7 @@ impl Asteroid {
                 continue;
             }
             let force_magnitude = asteroid.size / distance;
-            let force = direction.norm() * force_magnitude;
+            let force = direction.normalize() * force_magnitude;
             acc += force;
         }
         self.vel = acc * step + self.vel;
@@ -57,17 +57,14 @@ impl Asteroid {
         let momentum_x = mass1 * self.vel.x + mass2 * other.vel.x;
         let momentum_y = mass1 * self.vel.y + mass2 * other.vel.y;
 
-        let new_vel = Vector {
-            x: momentum_x / total_mass,
-            y: momentum_y / total_mass,
-        };
+        let new_vel = vec2(momentum_x / total_mass, momentum_y / total_mass);
 
         let new_size = self.size + other.size;
 
-        let new_pos = Vector {
-            x: (mass1 * self.pos.x + mass2 * other.pos.x) / total_mass,
-            y: (mass1 * self.pos.y + mass2 * other.pos.y) / total_mass,
-        };
+        let new_pos = vec2(
+            (mass1 * self.pos.x + mass2 * other.pos.x) / total_mass,
+            (mass1 * self.pos.y + mass2 * other.pos.y) / total_mass,
+        );
 
         Asteroid::new(new_pos, new_vel, new_size)
     }

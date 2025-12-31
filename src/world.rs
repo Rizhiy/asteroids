@@ -1,5 +1,5 @@
 use crate::objects::Asteroid;
-use crate::vector::Vector;
+use glam::{Vec2, vec2};
 use std::collections::HashSet;
 
 const STATS_UPDATE_RATE: f32 = 5.0;
@@ -100,17 +100,17 @@ impl WorldState {
         self.asteroids.extend(to_add);
     }
 
-    pub fn spawn_asteroid(&mut self, pos: Vector, vel: Vector, size: f32) {
+    pub fn spawn_asteroid(&mut self, pos: Vec2, vel: Vec2, size: f32) {
         self.asteroids.push(Asteroid::new(pos, vel, size));
     }
 
-    pub fn calculate_center_of_mass(&self, weighted: bool) -> Vector {
+    pub fn calculate_center_of_mass(&self, weighted: bool) -> Vec2 {
         if self.asteroids.is_empty() {
-            return Vector { x: 0.0, y: 0.0 };
+            return vec2(0.0, 0.0);
         }
 
         let mut total_mass = 0.0;
-        let mut weighted_pos = Vector { x: 0.0, y: 0.0 };
+        let mut weighted_pos = vec2(0.0, 0.0);
 
         for asteroid in &self.asteroids {
             let mass = if weighted { asteroid.size() } else { 1.0 };
@@ -121,7 +121,7 @@ impl WorldState {
         weighted_pos / total_mass
     }
 
-    fn calculate_mass_std(&self, center: Vector, weighted: bool) -> f32 {
+    fn calculate_mass_std(&self, center: Vec2, weighted: bool) -> f32 {
         if self.asteroids.is_empty() {
             return 0.0;
         }
