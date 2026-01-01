@@ -203,12 +203,9 @@ impl RunningState {
             .contains(&MouseButton::Left)
         {
             let screen_pos = self.framebuffer.cursor_pos;
-            // Scale velocity based on actual simulation speed (UPS / tick_rate)
-            let actual_speed = self.world.updates_per_second() / self.world.tick_rate();
-
             let (pos, vel, size) = self
                 .framebuffer
-                .finish_creating_asteroid(screen_pos, actual_speed);
+                .finish_creating_asteroid(screen_pos, self.world.actual_speed());
             self.world.spawn_asteroid(pos, vel, size);
         }
     }
@@ -258,7 +255,7 @@ impl RunningState {
 
         if self.framebuffer.speed_multiplier != 0.0 {
             // Clamp speed multiplier to prevent simulation from falling behind and reducing FPS
-            let actual_speed = self.world.updates_per_second() / self.world.tick_rate();
+            let actual_speed = self.world.actual_speed();
             let max_allowed_speed = (actual_speed * MAX_SPEED_MULTIPLIER_RATIO).max(0.01);
             let effective_speed = self.framebuffer.speed_multiplier.min(max_allowed_speed);
 

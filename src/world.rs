@@ -159,4 +159,8 @@ impl WorldState {
     pub fn tick_rate(&self) -> f32 {
         self.tick_rate
     }
+
+    pub fn actual_speed(&self) -> f32 {
+        self.updates_per_second() / self.tick_rate()
+    }
 }

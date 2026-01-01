@@ -32,7 +32,7 @@ impl RandomScreenSpaceStrategy {
 }
 
 impl SpawnStrategy for RandomScreenSpaceStrategy {
-    fn spawn(&self, _world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid> {
+    fn spawn(&self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid> {
         let width = fb.width() as f32 / fb.zoom;
         let height = fb.height() as f32 / fb.zoom;
 
@@ -44,7 +44,11 @@ impl SpawnStrategy for RandomScreenSpaceStrategy {
 
         let speed = power_law_sample(self.min_speed, self.speed_alpha).min(self.max_speed);
         let random_vel = vec2(angle.cos() * speed, angle.sin() * speed);
-        let vel = random_vel + fb.camera_vel;
+        let actual_speed = world.actual_speed();
+        let mut vel = random_vel + fb.camera_vel;
+        if actual_speed > 0.0 {
+            vel /= actual_speed;
+        }
 
         let size = power_law_sample(self.min_size, self.size_alpha).min(self.max_size);
 
