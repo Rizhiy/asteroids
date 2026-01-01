@@ -36,12 +36,33 @@
 - **Understand the actual requirement** - Don't assume or over-interpret
 - **Start with the simplest solution** - Resist the urge to add abstractions
 - **Listen to feedback** - If told something is getting too complex, stop and simplify.
-- If a file was modified, and contains implementation different from how you left it, it was probably modified by other developers with a good reason. Adjust to it, rather than trying to revert to your own implementation.
+- If a file was modified, and contains implementation different from how you left it,
+it was probably modified by other developers with a good reason.
+Adjust to it, rather than trying to revert to your own implementation.
 
 ### Commenting
 
 - Comments should explain why something is happening, not what is happening.
 - Prefer clear variable and function names over comments and long doc-strings.
+
+### Control Flow
+
+- Prefer early returns over nested if statements
+- Use guard clauses to handle edge cases and invalid inputs at the start of functions
+- Exit early when conditions are not met rather than wrapping logic in nested blocks
+- Examples:
+  ```rust
+  // Good: Early return
+  if invalid_condition {
+      return;
+  }
+  do_main_logic();
+  
+  // Bad: Nested if
+  if !invalid_condition {
+      do_main_logic();
+  }
+  ```
 
 ### Magic Numbers
 

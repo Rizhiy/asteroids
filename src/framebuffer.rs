@@ -92,10 +92,45 @@ impl FrameBuffer {
         frame[index + 3] = color.a;
     }
 
+    fn add_screen_pixel(&mut self, screen_x: i32, screen_y: i32, color: Color) {
+        if screen_x < 0
+            || screen_x >= self.width as i32
+            || screen_y < 0
+            || screen_y >= self.height as i32
+        {
+            return;
+        }
+
+        let frame = self.pixels.frame_mut();
+        let index = ((screen_y as u32 * self.width + screen_x as u32) * 4) as usize;
+        frame[index] = color.r;
+        frame[index + 1] = color.g;
+        frame[index + 2] = color.b;
+        frame[index + 3] = (frame[index + 3] as u16 + color.a as u16).min(255) as u8;
+    }
+
     pub fn draw_circle(&mut self, world_pos: Vec2, world_radius: f32, color: Color) {
         let screen_center = vec2(self.width as f32 / 2.0, self.height as f32 / 2.0);
         let screen_pos = (world_pos - self.camera_pos) * self.zoom + screen_center;
         let screen_radius = world_radius * self.zoom;
+
+        // For very small asteroids, just draw a single dimmed pixel
+        if screen_radius < 0.5 {
+            let center_x = screen_pos.x.round() as i32;
+            let center_y = screen_pos.y.round() as i32;
+
+            // Coverage based on area: circle area / pixel area = pi * r^2
+            let coverage = (std::f32::consts::PI * screen_radius * screen_radius).min(1.0);
+
+            let aa_color = Color {
+                r: color.r,
+                g: color.g,
+                b: color.b,
+                a: (color.a as f32 * coverage) as u8,
+            };
+            self.add_screen_pixel(center_x, center_y, aa_color);
+            return;
+        }
 
         let ceil_radius = screen_radius.ceil() as i32;
         let center_x = screen_pos.x.round() as i32;
@@ -107,9 +142,28 @@ impl FrameBuffer {
                 let dy = y_offset as f32;
                 let distance = (dx * dx + dy * dy).sqrt();
 
-                if distance <= screen_radius {
-                    self.set_screen_pixel(center_x + x_offset, center_y + y_offset, color);
+                if distance > screen_radius + 1.0 {
+                    continue;
                 }
+
+                // Calculate coverage for anti-aliasing
+                let coverage = if distance < screen_radius {
+                    1.0
+                } else {
+                    (screen_radius + 1.0 - distance).max(0.0)
+                };
+
+                if coverage == 0.0 {
+                    continue;
+                }
+
+                let aa_color = Color {
+                    r: color.r,
+                    g: color.g,
+                    b: color.b,
+                    a: (color.a as f32 * coverage) as u8,
+                };
+                self.set_screen_pixel(center_x + x_offset, center_y + y_offset, aa_color);
             }
         }
     }
@@ -221,12 +275,17 @@ impl FrameBuffer {
         }
     }
 
-    pub fn finish_creating_asteroid(&mut self, screen_pos: Vec2) -> (Vec2, Vec2, f32) {
+    pub fn finish_creating_asteroid(
+        &mut self,
+        screen_pos: Vec2,
+        actual_speed: f32,
+    ) -> (Vec2, Vec2, f32) {
         let screen_center = vec2(self.width as f32 / 2.0, self.height as f32 / 2.0);
         let world_end_pos = (screen_pos - screen_center) / self.zoom + self.camera_pos;
 
         let pos = self.asteroid_start_pos;
-        let vel = (world_end_pos - self.asteroid_start_pos) + self.camera_vel;
+        let base_vel = (world_end_pos - self.asteroid_start_pos) + self.camera_vel;
+        let vel = base_vel * actual_speed;
         let size = self.asteroid_size;
 
         self.creating_asteroid = false;

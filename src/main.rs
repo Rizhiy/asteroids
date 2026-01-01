@@ -114,7 +114,7 @@ impl RunningState {
             random_spawn_hold_time: 0.0,
             window_visible: true,
             stats_changed: false,
-            spawn_strategy: Box::new(RandomScreenSpaceStrategy::new()),
+            spawn_strategy: Box::new(OrbitalDiskStrategy::new()),
         }
     }
 
@@ -133,7 +133,9 @@ impl RunningState {
 
 impl RunningState {
     fn draw(&mut self) {
-        self.framebuffer.clear(Color::BLACK);
+        let mut clear_color = Color::BLACK;
+        clear_color.a = 0;
+        self.framebuffer.clear(clear_color);
 
         for asteroid in &self.world.asteroids {
             asteroid.draw(&mut self.framebuffer, Color::WHITE);
@@ -201,7 +203,12 @@ impl RunningState {
             .contains(&MouseButton::Left)
         {
             let screen_pos = self.framebuffer.cursor_pos;
-            let (pos, vel, size) = self.framebuffer.finish_creating_asteroid(screen_pos);
+            // Scale velocity based on actual simulation speed (UPS / tick_rate)
+            let actual_speed = self.world.updates_per_second() / self.world.tick_rate();
+
+            let (pos, vel, size) = self
+                .framebuffer
+                .finish_creating_asteroid(screen_pos, actual_speed);
             self.world.spawn_asteroid(pos, vel, size);
         }
     }
