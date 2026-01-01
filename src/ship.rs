@@ -10,6 +10,7 @@ const SHIP_MASS: f32 = 100.0;
 const SHIP_MAX_HEALTH: f32 = 10000.0;
 const COLLISION_DAMAGE_THRESHOLD: f32 = 10.0;
 const RESTITUTION: f32 = 0.5;
+const FRICTION_COEFFICIENT: f32 = 0.5;
 
 pub struct Ship {
     pub pos: Vec2,
@@ -107,6 +108,20 @@ impl Ship {
                 // Apply velocity changes (impulse / mass = velocity change)
                 ship_vel_delta -= impulse / ship_mass;
                 asteroid.set_vel(asteroid.vel() + impulse / asteroid_mass);
+
+                // Apply friction for tangential velocity
+                // Calculate tangential component of relative velocity
+                let tangent = Vec2::new(-normal.y, normal.x);
+                let rel_vel_tangent = relative_vel.dot(tangent);
+
+                // Friction opposes tangential motion, proportional to normal force
+                let normal_force = asteroid_mass * ship_mass / distance;
+                let friction_magnitude = FRICTION_COEFFICIENT * normal_force * rel_vel_tangent;
+                let friction_impulse = -tangent * friction_magnitude;
+
+                // Apply friction impulse
+                acc -= friction_impulse / ship_mass;
+                asteroid.set_vel(asteroid.vel() - friction_impulse / asteroid_mass * dt);
             }
         }
 
@@ -176,15 +191,6 @@ impl Ship {
                 power_color,
             );
         }
-
-        // Draw label
-        let engine_text = format!("{}%", (self.engine_power * 100.0) as u32);
-        fb.draw_text(
-            &engine_text,
-            vec2(indicator_x as f32, (indicator_y - 20) as f32),
-            16.0,
-            Color::WHITE,
-        );
 
         // Draw orientation arrow to the right of the indicator
         let arrow_center_x = indicator_x + indicator_width + 40;
@@ -291,15 +297,6 @@ impl Ship {
                 health_color,
             );
         }
-
-        // Draw health percentage label
-        let health_text = format!("{}%", (health_ratio * 100.0) as u32);
-        fb.draw_text(
-            &health_text,
-            vec2((bar_x - 10) as f32, (bar_y - 20) as f32),
-            16.0,
-            Color::WHITE,
-        );
     }
 
     pub fn apply_control(
