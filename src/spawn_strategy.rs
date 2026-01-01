@@ -1,10 +1,10 @@
 use crate::framebuffer::FrameBuffer;
 use crate::objects::Asteroid;
 use crate::world::WorldState;
-use glam::vec2;
+use glam::{Vec2, vec2};
 
 pub trait SpawnStrategy {
-    fn spawn(&self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid>;
+    fn spawn(&mut self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid>;
 
     fn name(&self) -> &str;
 }
@@ -32,7 +32,7 @@ impl RandomScreenSpaceStrategy {
 }
 
 impl SpawnStrategy for RandomScreenSpaceStrategy {
-    fn spawn(&self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid> {
+    fn spawn(&mut self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid> {
         let width = fb.width() as f32 / fb.zoom;
         let height = fb.height() as f32 / fb.zoom;
 
@@ -81,7 +81,7 @@ impl OrbitalDiskStrategy {
 }
 
 impl SpawnStrategy for OrbitalDiskStrategy {
-    fn spawn(&self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid> {
+    fn spawn(&mut self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid> {
         let center = world.calculate_center_of_mass(true);
 
         // Max radius depends on zoom level (more zoomed out = larger spawn area)
@@ -138,4 +138,141 @@ fn normal_sample(mean: f32, std_dev: f32) -> f32 {
     let u2 = fastrand::f32();
     let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
     mean + std_dev * z0
+}
+
+pub struct SolarSystemStrategy {
+    star_spawned: bool,
+    planets: Vec<PlanetData>,
+    total_moons: usize,
+}
+
+#[derive(Clone)]
+struct PlanetData {
+    pos: Vec2,
+    vel: Vec2,
+    radius: f32,
+}
+
+impl SolarSystemStrategy {
+    pub fn new() -> Self {
+        Self {
+            star_spawned: false,
+            planets: Vec::new(),
+            total_moons: 0,
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.star_spawned && self.planets.len() >= 10 && self.total_moons >= 30
+    }
+}
+
+impl SpawnStrategy for SolarSystemStrategy {
+    fn spawn(&mut self, world: &WorldState, _fb: &FrameBuffer) -> Vec<Asteroid> {
+        const SHIP_RADIUS: f32 = 10.0;
+        const STAR_RADIUS_MULTIPLIER: f32 = 125.0;
+        const PLANET_RADIUS_MULTIPLIER: f32 = 25.0;
+        const MOON_RADIUS_MULTIPLIER: f32 = 5.0;
+        const PLANET_ORBIT_MULTIPLIER: f32 = 10.0;
+        const MOON_ORBIT_MULTIPLIER: f32 = 3.0;
+
+        if self.is_complete() {
+            return vec![];
+        }
+
+        // Step 1: Spawn the star
+        if !self.star_spawned {
+            let star_radius = SHIP_RADIUS * STAR_RADIUS_MULTIPLIER;
+            let star_mass = star_radius * star_radius * std::f32::consts::PI;
+
+            // Spawn star far from ship to avoid immediate collision
+            let safe_distance = world.ship.radius() + star_radius * 5.0;
+            let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
+            let star_pos =
+                world.ship.pos + vec2(angle.cos() * safe_distance, angle.sin() * safe_distance);
+
+            self.star_spawned = true;
+            return vec![Asteroid::new(star_pos, vec2(0.0, 0.0), star_mass)];
+        }
+
+        // Get star position (it's the first asteroid spawned by this strategy)
+        // We assume it's the most massive asteroid
+        let star = world
+            .asteroids
+            .iter()
+            .max_by(|a, b| a.size().partial_cmp(&b.size()).unwrap());
+
+        if star.is_none() {
+            return vec![];
+        }
+        let star = star.unwrap();
+        let star_pos = star.pos();
+        let star_mass = star.size();
+        let star_radius = (star_mass / std::f32::consts::PI).sqrt();
+
+        // Step 2 & 3: Spawn planets or moons
+        if self.planets.len() < 10 {
+            // Spawn a planet if we have less than 10
+            // Or 50/50 chance if we already have at least one planet
+            let should_spawn_planet = self.planets.is_empty() || fastrand::bool();
+
+            if should_spawn_planet {
+                let planet_radius = SHIP_RADIUS * PLANET_RADIUS_MULTIPLIER;
+                let planet_mass = planet_radius * planet_radius * std::f32::consts::PI;
+
+                // Orbit distance: 100x star radius
+                let orbit_radius = star_radius * PLANET_ORBIT_MULTIPLIER;
+                let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
+                let planet_pos =
+                    star_pos + vec2(angle.cos() * orbit_radius, angle.sin() * orbit_radius);
+
+                // Calculate orbital velocity: v = sqrt(M / r) for F = M / r
+                let orbital_speed = (star_mass / orbit_radius).sqrt();
+                let planet_vel = vec2(-angle.sin() * orbital_speed, angle.cos() * orbital_speed);
+
+                // Store planet data for moon spawning
+                self.planets.push(PlanetData {
+                    pos: planet_pos,
+                    vel: planet_vel,
+                    radius: planet_radius,
+                });
+
+                return vec![Asteroid::new(planet_pos, planet_vel, planet_mass)];
+            }
+        }
+
+        // Spawn a moon if we have planets and haven't reached 30 moons
+        if !self.planets.is_empty() && self.total_moons < 30 {
+            // Pick a random planet
+            let planet_idx = fastrand::usize(0..self.planets.len());
+            let planet = self.planets[planet_idx].clone();
+
+            let moon_radius = SHIP_RADIUS * MOON_RADIUS_MULTIPLIER;
+            let moon_mass = moon_radius * moon_radius * std::f32::consts::PI;
+
+            // Orbit distance: 10x planet radius
+            let orbit_radius = planet.radius * MOON_ORBIT_MULTIPLIER;
+            let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
+            let moon_relative_pos = vec2(angle.cos() * orbit_radius, angle.sin() * orbit_radius);
+            let moon_pos = planet.pos + moon_relative_pos;
+
+            // Calculate orbital velocity around planet
+            let planet_mass = planet.radius * planet.radius * std::f32::consts::PI;
+            let orbital_speed = (planet_mass / orbit_radius).sqrt();
+            let moon_orbital_vel = vec2(-angle.sin() * orbital_speed, angle.cos() * orbital_speed);
+
+            // Add planet's velocity to moon's orbital velocity
+            let moon_vel = planet.vel + moon_orbital_vel;
+
+            self.total_moons += 1;
+
+            return vec![Asteroid::new(moon_pos, moon_vel, moon_mass)];
+        }
+
+        vec![]
+    }
+
+    fn name(&self) -> &str {
+        "Solar System"
+    }
 }

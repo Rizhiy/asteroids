@@ -272,7 +272,7 @@ impl FrameBuffer {
     pub fn apply_zoom(&mut self, cursor_pos: Vec2, zoom_factor: f32) {
         let world_pos_before = self.screen_to_world(cursor_pos);
         self.zoom *= zoom_factor;
-        self.zoom = self.zoom.clamp(0.01, 10.0);
+        self.zoom = self.zoom.clamp(0.001, 10.0);
         let world_pos_after = self.screen_to_world(cursor_pos);
         if self.camera_mode == CameraMode::Manual {
             self.camera_pos += world_pos_before - world_pos_after;

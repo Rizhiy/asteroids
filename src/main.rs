@@ -10,7 +10,9 @@ use framebuffer::FrameBuffer;
 use glam::vec2;
 use objects::Asteroid;
 use pixels::{Pixels, SurfaceTexture};
-use spawn_strategy::{OrbitalDiskStrategy, RandomScreenSpaceStrategy, SpawnStrategy};
+use spawn_strategy::{
+    OrbitalDiskStrategy, RandomScreenSpaceStrategy, SolarSystemStrategy, SpawnStrategy,
+};
 use std::pin::Pin;
 use std::time::Duration;
 use std::time::Instant;
@@ -270,7 +272,8 @@ impl RunningState {
         let current_name = self.spawn_strategy.name();
         self.spawn_strategy = match current_name {
             "Random" => Box::new(OrbitalDiskStrategy::new()),
-            "Orbital" => Box::new(RandomScreenSpaceStrategy::new()),
+            "Orbital" => Box::new(SolarSystemStrategy::new()),
+            "Solar System" => Box::new(RandomScreenSpaceStrategy::new()),
             _ => Box::new(RandomScreenSpaceStrategy::new()),
         };
         self.stats_changed = true;
