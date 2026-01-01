@@ -43,6 +43,17 @@
 - Comments should explain why something is happening, not what is happening.
 - Prefer clear variable and function names over comments and long doc-strings.
 
+### Magic Numbers
+
+- Extract numeric literals into named constants when they have semantic meaning
+- Constants should be defined at the top of the file or module
+- Use UPPER_SNAKE_CASE for constant names
+- Examples of magic numbers that should be extracted:
+  - Thresholds or limits (e.g., `5.0` for max speed ratio)
+  - Configuration values (e.g., `60.0` for FPS target)
+  - Mathematical constants with specific meaning (e.g., `1.5` for speed adjustment factor)
+- Simple literals in obvious contexts don't need extraction (e.g., `0`, `1`, `2` for array indexing)
+
 ### Testing Strategy
 
 - Tests should run quickly
