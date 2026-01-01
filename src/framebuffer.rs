@@ -285,7 +285,8 @@ impl FrameBuffer {
 
         let pos = self.asteroid_start_pos;
         let base_vel = (world_end_pos - self.asteroid_start_pos) + self.camera_vel;
-        let vel = base_vel * actual_speed;
+        // Divide by actual_speed so faster simulation = smaller velocity in world units
+        let vel = base_vel / actual_speed.max(0.01);
         let size = self.asteroid_size;
 
         self.creating_asteroid = false;
