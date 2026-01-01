@@ -261,11 +261,8 @@ impl RunningState {
     }
 
     fn spawn_asteroids(&mut self) {
-        let asteroids = self.spawn_strategy.spawn(&self.world, &self.framebuffer);
-
-        for asteroid in asteroids {
-            self.world.asteroids.push(asteroid);
-        }
+        self.spawn_strategy
+            .spawn(&mut self.world, &self.framebuffer);
     }
 
     fn toggle_spawn_strategy(&mut self) {

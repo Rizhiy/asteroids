@@ -1,7 +1,7 @@
 use crate::color::Color;
 use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
 use fontdue::{Font, FontSettings};
-use glam::{Vec2, vec2};
+use glam::{vec2, Vec2};
 use image::RgbaImage;
 use pixels::Pixels;
 use std::collections::HashSet;

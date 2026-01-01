@@ -1,5 +1,5 @@
 use crate::objects::Asteroid;
-use glam::{Vec2, vec2};
+use glam::{vec2, Vec2};
 
 const RCS_ACCELERATION: f32 = 10.0;
 const MAIN_ENGINE_ACCELERATION: f32 = RCS_ACCELERATION * 100.0;
@@ -195,7 +195,6 @@ impl Ship {
         // Draw orientation arrow to the right of the indicator
         let arrow_center_x = indicator_x + indicator_width + 40;
         let arrow_center_y = indicator_y + indicator_height / 2;
-        let arrow_size = 15;
 
         let arrow_color = Color {
             r: 255,
@@ -203,19 +202,6 @@ impl Ship {
             b: 255,
             a: 255,
         };
-
-        // Draw circle background
-        let bg_color = Color {
-            r: 50,
-            g: 50,
-            b: 50,
-            a: 200,
-        };
-        fb.draw_circle(
-            vec2(arrow_center_x as f32, arrow_center_y as f32),
-            arrow_size as f32,
-            bg_color,
-        );
 
         // Draw arrow pointing in ship's orientation
         let cos_angle = self.orientation.cos();

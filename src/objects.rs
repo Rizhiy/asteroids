@@ -1,5 +1,5 @@
 use crate::color::Color;
-use glam::{Vec2, vec2};
+use glam::{vec2, Vec2};
 use std::f32::consts::PI;
 
 #[derive(Default, Clone, Copy, Debug)]

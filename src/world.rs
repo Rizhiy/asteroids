@@ -1,6 +1,6 @@
 use crate::objects::Asteroid;
 use crate::ship::Ship;
-use glam::{Vec2, vec2};
+use glam::{vec2, Vec2};
 use std::collections::HashSet;
 
 const STATS_UPDATE_RATE: f32 = 5.0;

@@ -1,10 +1,10 @@
 use crate::framebuffer::FrameBuffer;
 use crate::objects::Asteroid;
 use crate::world::WorldState;
-use glam::{Vec2, vec2};
+use glam::{vec2, Vec2};
 
 pub trait SpawnStrategy {
-    fn spawn(&mut self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid>;
+    fn spawn(&mut self, world: &mut WorldState, fb: &FrameBuffer);
 
     fn name(&self) -> &str;
 }
@@ -32,7 +32,7 @@ impl RandomScreenSpaceStrategy {
 }
 
 impl SpawnStrategy for RandomScreenSpaceStrategy {
-    fn spawn(&mut self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid> {
+    fn spawn(&mut self, world: &mut WorldState, fb: &FrameBuffer) {
         let width = fb.width() as f32 / fb.zoom;
         let height = fb.height() as f32 / fb.zoom;
 
@@ -52,7 +52,7 @@ impl SpawnStrategy for RandomScreenSpaceStrategy {
 
         let size = power_law_sample(self.min_size, self.size_alpha).min(self.max_size);
 
-        vec![Asteroid::new(pos, vel, size)]
+        world.asteroids.push(Asteroid::new(pos, vel, size));
     }
 
     fn name(&self) -> &str {
@@ -81,7 +81,7 @@ impl OrbitalDiskStrategy {
 }
 
 impl SpawnStrategy for OrbitalDiskStrategy {
-    fn spawn(&mut self, world: &WorldState, fb: &FrameBuffer) -> Vec<Asteroid> {
+    fn spawn(&mut self, world: &mut WorldState, fb: &FrameBuffer) {
         let center = world.calculate_center_of_mass(true);
 
         // Max radius depends on zoom level (more zoomed out = larger spawn area)
@@ -119,7 +119,7 @@ impl SpawnStrategy for OrbitalDiskStrategy {
         // Size from normal distribution
         let size = normal_sample(self.mean_size, self.size_std_dev).max(0.1);
 
-        vec![Asteroid::new(pos, vel, size)]
+        world.asteroids.push(Asteroid::new(pos, vel, size));
     }
 
     fn name(&self) -> &str {
@@ -168,7 +168,7 @@ impl SolarSystemStrategy {
 }
 
 impl SpawnStrategy for SolarSystemStrategy {
-    fn spawn(&mut self, world: &WorldState, _fb: &FrameBuffer) -> Vec<Asteroid> {
+    fn spawn(&mut self, world: &mut WorldState, _fb: &FrameBuffer) {
         const SHIP_RADIUS: f32 = 10.0;
         const STAR_RADIUS_MULTIPLIER: f32 = 125.0;
         const PLANET_RADIUS_MULTIPLIER: f32 = 25.0;
@@ -177,7 +177,7 @@ impl SpawnStrategy for SolarSystemStrategy {
         const MOON_ORBIT_MULTIPLIER: f32 = 3.0;
 
         if self.is_complete() {
-            return vec![];
+            return;
         }
 
         // Step 1: Spawn the star
@@ -186,13 +186,24 @@ impl SpawnStrategy for SolarSystemStrategy {
             let star_mass = star_radius * star_radius * std::f32::consts::PI;
 
             // Spawn star far from ship to avoid immediate collision
-            let safe_distance = world.ship.radius() + star_radius * 5.0;
+            let safe_distance = star_radius * 5.0;
             let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
             let star_pos =
                 world.ship.pos + vec2(angle.cos() * safe_distance, angle.sin() * safe_distance);
 
+            // Set ship velocity to orbit the star
+            // For F = M / r, orbital velocity is v = sqrt(M)
+            let orbital_speed = star_mass.sqrt();
+
+            // Ship orbits perpendicular to the radius vector (from ship to star)
+            // Since angle points from ship to star, perpendicular is (sin, -cos) for counter-clockwise
+            world.ship.vel = vec2(angle.sin() * orbital_speed, -angle.cos() * orbital_speed);
+
             self.star_spawned = true;
-            return vec![Asteroid::new(star_pos, vec2(0.0, 0.0), star_mass)];
+            world
+                .asteroids
+                .push(Asteroid::new(star_pos, vec2(0.0, 0.0), star_mass));
+            return;
         }
 
         // Get star position (it's the first asteroid spawned by this strategy)
@@ -203,7 +214,7 @@ impl SpawnStrategy for SolarSystemStrategy {
             .max_by(|a, b| a.size().partial_cmp(&b.size()).unwrap());
 
         if star.is_none() {
-            return vec![];
+            return;
         }
         let star = star.unwrap();
         let star_pos = star.pos();
@@ -212,7 +223,6 @@ impl SpawnStrategy for SolarSystemStrategy {
 
         // Step 2 & 3: Spawn planets or moons
         if self.planets.len() < 10 {
-            // Spawn a planet if we have less than 10
             // Or 50/50 chance if we already have at least one planet
             let should_spawn_planet = self.planets.is_empty() || fastrand::bool();
 
@@ -220,24 +230,26 @@ impl SpawnStrategy for SolarSystemStrategy {
                 let planet_radius = SHIP_RADIUS * PLANET_RADIUS_MULTIPLIER;
                 let planet_mass = planet_radius * planet_radius * std::f32::consts::PI;
 
-                // Orbit distance: 100x star radius
                 let orbit_radius = star_radius * PLANET_ORBIT_MULTIPLIER;
                 let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
                 let planet_pos =
                     star_pos + vec2(angle.cos() * orbit_radius, angle.sin() * orbit_radius);
 
-                // Calculate orbital velocity: v = sqrt(M / r) for F = M / r
-                let orbital_speed = (star_mass / orbit_radius).sqrt();
+                // Calculate orbital velocity for F = M / r
+                // For circular orbit: v^2 / r = M / r, so v^2 = M, thus v = sqrt(M)
+                let orbital_speed = star_mass.sqrt();
                 let planet_vel = vec2(-angle.sin() * orbital_speed, angle.cos() * orbital_speed);
 
-                // Store planet data for moon spawning
                 self.planets.push(PlanetData {
                     pos: planet_pos,
                     vel: planet_vel,
                     radius: planet_radius,
                 });
 
-                return vec![Asteroid::new(planet_pos, planet_vel, planet_mass)];
+                world
+                    .asteroids
+                    .push(Asteroid::new(planet_pos, planet_vel, planet_mass));
+                return;
             }
         }
 
@@ -250,15 +262,15 @@ impl SpawnStrategy for SolarSystemStrategy {
             let moon_radius = SHIP_RADIUS * MOON_RADIUS_MULTIPLIER;
             let moon_mass = moon_radius * moon_radius * std::f32::consts::PI;
 
-            // Orbit distance: 10x planet radius
             let orbit_radius = planet.radius * MOON_ORBIT_MULTIPLIER;
             let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
             let moon_relative_pos = vec2(angle.cos() * orbit_radius, angle.sin() * orbit_radius);
             let moon_pos = planet.pos + moon_relative_pos;
 
-            // Calculate orbital velocity around planet
+            // Calculate orbital velocity around planet for F = M / r
+            // For circular orbit: v^2 / r = M / r, so v^2 = M, thus v = sqrt(M)
             let planet_mass = planet.radius * planet.radius * std::f32::consts::PI;
-            let orbital_speed = (planet_mass / orbit_radius).sqrt();
+            let orbital_speed = planet_mass.sqrt();
             let moon_orbital_vel = vec2(-angle.sin() * orbital_speed, angle.cos() * orbital_speed);
 
             // Add planet's velocity to moon's orbital velocity
@@ -266,10 +278,10 @@ impl SpawnStrategy for SolarSystemStrategy {
 
             self.total_moons += 1;
 
-            return vec![Asteroid::new(moon_pos, moon_vel, moon_mass)];
+            world
+                .asteroids
+                .push(Asteroid::new(moon_pos, moon_vel, moon_mass));
         }
-
-        vec![]
     }
 
     fn name(&self) -> &str {
