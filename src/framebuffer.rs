@@ -252,7 +252,9 @@ impl FrameBuffer {
         self.zoom *= zoom_factor;
         self.zoom = self.zoom.clamp(0.01, 10.0);
         let world_pos_after = self.screen_to_world(cursor_pos);
-        self.camera_pos += world_pos_before - world_pos_after;
+        if !self.camera_tracking {
+            self.camera_pos += world_pos_before - world_pos_after;
+        }
     }
 
     pub fn reset_zoom(&mut self) {
