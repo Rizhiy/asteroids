@@ -17,6 +17,10 @@ impl Asteroid {
         self.pos
     }
 
+    pub fn vel(&self) -> Vec2 {
+        self.vel
+    }
+
     pub fn radius(self) -> f32 {
         self.size.sqrt() / PI
     }

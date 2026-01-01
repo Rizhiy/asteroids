@@ -1,4 +1,5 @@
 use crate::objects::Asteroid;
+use crate::ship::Ship;
 use glam::{Vec2, vec2};
 use std::collections::HashSet;
 
@@ -6,6 +7,7 @@ const STATS_UPDATE_RATE: f32 = 5.0;
 
 pub struct WorldState {
     pub asteroids: Vec<Asteroid>,
+    pub ship: Ship,
     pub world_time: f32,
     tick_rate: f32,
     cleanup_threshold_multiplier: f32,
@@ -18,6 +20,7 @@ impl Default for WorldState {
     fn default() -> Self {
         Self {
             asteroids: Vec::new(),
+            ship: Ship::new(vec2(0.0, 0.0)),
             world_time: 0.0,
             tick_rate: 100.0,
             cleanup_threshold_multiplier: 10.0,
@@ -48,6 +51,9 @@ impl WorldState {
                 })
                 .collect();
             self.asteroids = new_asteroids;
+
+            // Update ship
+            self.ship.update(&mut self.asteroids, tick_duration);
 
             self.check_collisions();
             self.cleanup_distant_asteroids();

@@ -1,6 +1,7 @@
 mod color;
 mod framebuffer;
 mod objects;
+mod ship;
 mod spawn_strategy;
 mod world;
 
@@ -70,6 +71,7 @@ struct RunningState {
     framebuffer: FrameBuffer,
     window: Pin<Box<Window>>,
     world: WorldState,
+    ship_sprite: image::RgbaImage,
     last_frame_time: Instant,
     frame_count: u32,
     last_fps_time: Instant,
@@ -100,11 +102,17 @@ impl RunningState {
 
         let framebuffer = FrameBuffer::new(pixels, size.width, size.height);
 
+        // Load ship sprite
+        let ship_sprite = image::open("static/ship.png")
+            .expect("Failed to load ship sprite")
+            .to_rgba8();
+
         let now = Instant::now();
         Self {
             framebuffer,
             window,
             world: WorldState::new(),
+            ship_sprite,
             last_frame_time: now,
             frame_count: 0,
             last_fps_time: now,
@@ -141,12 +149,20 @@ impl RunningState {
             asteroid.draw(&mut self.framebuffer, Color::WHITE);
         }
 
+        // Draw ship
+        self.world
+            .ship
+            .draw(&mut self.framebuffer, &self.ship_sprite);
+
         if self.framebuffer.creating_asteroid {
-            let preview = Asteroid::new(
-                self.framebuffer.asteroid_start_pos,
-                vec2(0.0, 0.0),
-                self.framebuffer.asteroid_size,
+            let screen_center = vec2(
+                self.framebuffer.width() as f32 / 2.0,
+                self.framebuffer.height() as f32 / 2.0,
             );
+            let world_pos = (self.framebuffer.asteroid_screen_pos - screen_center)
+                / self.framebuffer.zoom
+                + self.framebuffer.camera_pos;
+            let preview = Asteroid::new(world_pos, vec2(0.0, 0.0), self.framebuffer.asteroid_size);
             preview.draw(&mut self.framebuffer, Color::WHITE);
         }
 
@@ -168,17 +184,26 @@ impl RunningState {
         self.framebuffer
             .draw_text(&time_text, time_pos, 16.0, Color::WHITE);
 
-        let speed_text = format!(
-            "Speed: {:.1}x | Zoom: {:.2}x | Spawn: {}",
-            self.framebuffer.speed_multiplier,
-            self.framebuffer.zoom,
-            self.spawn_strategy.name()
-        );
         let window_size = self.window().inner_size();
+
+        let speed_text = format!(
+            "Speed: {:.1}x | Zoom: {:.2}x",
+            self.framebuffer.speed_multiplier, self.framebuffer.zoom
+        );
         let text_width = speed_text.len() as f32 * 10.0;
         let speed_pos = vec2(window_size.width as f32 - text_width - 10.0, 10.0);
         self.framebuffer
             .draw_text(&speed_text, speed_pos, 16.0, Color::WHITE);
+
+        let mode_text = format!(
+            "Spawn: {} | Camera: {}",
+            self.spawn_strategy.name(),
+            self.framebuffer.camera_mode.name()
+        );
+        let mode_text_width = mode_text.len() as f32 * 10.0;
+        let mode_pos = vec2(window_size.width as f32 - mode_text_width - 10.0, 30.0);
+        self.framebuffer
+            .draw_text(&mode_text, mode_pos, 16.0, Color::WHITE);
 
         self.framebuffer.render().unwrap();
 
@@ -245,10 +270,49 @@ impl RunningState {
         let elapsed = self.last_update_time.elapsed();
         let update_start = Instant::now();
 
-        if !self.framebuffer.camera_tracking {
-            self.framebuffer.update_camera(dt);
-        } else {
-            self.framebuffer.camera_vel = vec2(0.0, 0.0);
+        match self.framebuffer.camera_mode {
+            framebuffer::CameraMode::Manual => {
+                self.framebuffer.update_camera(dt);
+            }
+            framebuffer::CameraMode::TrackingCenterOfMass => {
+                self.framebuffer.camera_vel = vec2(0.0, 0.0);
+                let center = self.world.calculate_center_of_mass(true);
+                let new_camera_pos = center;
+                self.framebuffer.camera_vel = (new_camera_pos - self.framebuffer.camera_pos) / dt;
+                self.framebuffer.camera_pos = new_camera_pos;
+            }
+            framebuffer::CameraMode::ShipControl => {
+                self.framebuffer.camera_vel = vec2(0.0, 0.0);
+
+                // Apply ship controls
+                let mut forward = 0.0;
+                let mut strafe = 0.0;
+                let mut rotate = 0.0;
+
+                if self.framebuffer.keys_pressed.contains(&KeyCode::KeyW) {
+                    forward += 1.0;
+                }
+                if self.framebuffer.keys_pressed.contains(&KeyCode::KeyS) {
+                    forward -= 1.0;
+                }
+                if self.framebuffer.keys_pressed.contains(&KeyCode::KeyA) {
+                    strafe -= 1.0;
+                }
+                if self.framebuffer.keys_pressed.contains(&KeyCode::KeyD) {
+                    strafe += 1.0;
+                }
+                if self.framebuffer.keys_pressed.contains(&KeyCode::KeyQ) {
+                    rotate -= 1.0;
+                }
+                if self.framebuffer.keys_pressed.contains(&KeyCode::KeyE) {
+                    rotate += 1.0;
+                }
+
+                self.world.ship.apply_control(forward, strafe, rotate, dt);
+
+                // Camera follows ship
+                self.framebuffer.camera_pos = self.world.ship.pos;
+            }
         }
 
         let mut update_secs = elapsed.as_secs_f32();
@@ -265,14 +329,6 @@ impl RunningState {
             update_secs = scaled_update_time / effective_speed.max(0.01);
         }
         let update_time = Duration::from_secs_f32(update_secs);
-
-        if self.framebuffer.camera_tracking {
-            let center = self.world.calculate_center_of_mass(true);
-            let new_camera_pos = center;
-
-            self.framebuffer.camera_vel = (new_camera_pos - self.framebuffer.camera_pos) / dt;
-            self.framebuffer.camera_pos = new_camera_pos;
-        }
 
         self.framebuffer.update_asteroid_size(dt);
 
@@ -397,7 +453,20 @@ impl ApplicationHandler for App {
 
                             // Handle T key to start tracking
                             if keycode == KeyCode::KeyT {
-                                running.framebuffer.camera_tracking = true;
+                                running.framebuffer.camera_mode =
+                                    framebuffer::CameraMode::TrackingCenterOfMass;
+                                running.stats_changed = true;
+                            }
+
+                            if keycode == KeyCode::KeyC {
+                                running.framebuffer.camera_mode = if running.framebuffer.camera_mode
+                                    == framebuffer::CameraMode::ShipControl
+                                {
+                                    framebuffer::CameraMode::Manual
+                                } else {
+                                    framebuffer::CameraMode::ShipControl
+                                };
+                                running.stats_changed = true;
                             }
 
                             if keycode == KeyCode::KeyP {
@@ -439,8 +508,11 @@ impl ApplicationHandler for App {
                             if matches!(
                                 keycode,
                                 KeyCode::KeyW | KeyCode::KeyS | KeyCode::KeyA | KeyCode::KeyD
-                            ) {
-                                running.framebuffer.camera_tracking = false;
+                            ) && running.framebuffer.camera_mode
+                                != framebuffer::CameraMode::ShipControl
+                            {
+                                running.framebuffer.camera_mode = framebuffer::CameraMode::Manual;
+                                running.stats_changed = true;
                             }
                         }
                         ElementState::Released => {

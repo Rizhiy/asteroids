@@ -2,11 +2,29 @@ use crate::color::Color;
 use fontdue::layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle};
 use fontdue::{Font, FontSettings};
 use glam::{Vec2, vec2};
+use image::RgbaImage;
 use pixels::Pixels;
 use std::collections::HashSet;
 use winit::{event::MouseButton, keyboard::KeyCode};
 
 const CAMERA_SPEED: f32 = 300.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraMode {
+    Manual,
+    TrackingCenterOfMass,
+    ShipControl,
+}
+
+impl CameraMode {
+    pub fn name(&self) -> &str {
+        match self {
+            CameraMode::Manual => "Manual",
+            CameraMode::TrackingCenterOfMass => "Tracking",
+            CameraMode::ShipControl => "Ship",
+        }
+    }
+}
 
 pub struct FrameBuffer {
     pixels: Pixels<'static>,
@@ -18,14 +36,16 @@ pub struct FrameBuffer {
     pub camera_vel: Vec2,
     pub cursor_pos: Vec2,
     pub creating_asteroid: bool,
-    pub asteroid_start_pos: Vec2,
+    pub asteroid_growing: bool,
+    pub asteroid_screen_pos: Vec2,
+    pub asteroid_screen_vel: Vec2,
     pub asteroid_size: f32,
     pub asteroid_hold_time: f32,
     pub keys_pressed: HashSet<KeyCode>,
     pub mouse_buttons_pressed: HashSet<MouseButton>,
     pub speed_multiplier: f32,
     pub previous_speed: f32,
-    pub camera_tracking: bool,
+    pub camera_mode: CameraMode,
     pub zoom: f32,
 }
 
@@ -44,14 +64,16 @@ impl FrameBuffer {
             camera_vel: vec2(0.0, 0.0),
             cursor_pos: vec2(0.0, 0.0),
             creating_asteroid: false,
-            asteroid_start_pos: vec2(0.0, 0.0),
+            asteroid_growing: false,
+            asteroid_screen_pos: vec2(0.0, 0.0),
+            asteroid_screen_vel: vec2(0.0, 0.0),
             asteroid_size: 1.0,
             asteroid_hold_time: 0.0,
             keys_pressed: HashSet::new(),
             mouse_buttons_pressed: HashSet::new(),
             speed_multiplier: 1.0,
             previous_speed: 1.0,
-            camera_tracking: false,
+            camera_mode: CameraMode::Manual,
             zoom: 1.0,
         }
     }
@@ -252,7 +274,7 @@ impl FrameBuffer {
         self.zoom *= zoom_factor;
         self.zoom = self.zoom.clamp(0.01, 10.0);
         let world_pos_after = self.screen_to_world(cursor_pos);
-        if !self.camera_tracking {
+        if self.camera_mode == CameraMode::Manual {
             self.camera_pos += world_pos_before - world_pos_after;
         }
     }
@@ -263,17 +285,24 @@ impl FrameBuffer {
 
     pub fn start_creating_asteroid(&mut self, screen_pos: Vec2) {
         self.creating_asteroid = true;
-        let screen_center = vec2(self.width as f32 / 2.0, self.height as f32 / 2.0);
-        self.asteroid_start_pos = (screen_pos - screen_center) / self.zoom + self.camera_pos;
+        self.asteroid_growing = true;
+        self.asteroid_screen_pos = screen_pos;
+        self.asteroid_screen_vel = vec2(0.0, 0.0);
         self.asteroid_size = 1.0;
         self.asteroid_hold_time = 0.0;
     }
 
     pub fn update_asteroid_size(&mut self, dt: f32) {
-        if self.creating_asteroid && self.mouse_buttons_pressed.contains(&MouseButton::Left) {
-            self.asteroid_hold_time += dt;
-            let scaled_time = self.asteroid_hold_time * 10.0;
-            self.asteroid_size = 1.0 + scaled_time * scaled_time;
+        if self.creating_asteroid && self.asteroid_growing {
+            if self.mouse_buttons_pressed.contains(&MouseButton::Left) {
+                self.asteroid_hold_time += dt;
+                let scaled_time = self.asteroid_hold_time * 10.0;
+                self.asteroid_size = 1.0 + scaled_time * scaled_time;
+                self.asteroid_screen_pos = self.cursor_pos;
+            } else {
+                // Button released, lock size and position
+                self.asteroid_growing = false;
+            }
         }
     }
 
@@ -283,21 +312,29 @@ impl FrameBuffer {
         actual_speed: f32,
     ) -> (Vec2, Vec2, f32) {
         let screen_center = vec2(self.width as f32 / 2.0, self.height as f32 / 2.0);
-        let world_end_pos = (screen_pos - screen_center) / self.zoom + self.camera_pos;
 
-        let pos = self.asteroid_start_pos;
-        let mut vel = (world_end_pos - self.asteroid_start_pos) + self.camera_vel;
+        // Calculate velocity in screen space
+        self.asteroid_screen_vel = screen_pos - self.asteroid_screen_pos;
+
+        // Convert position from screen to world
+        let world_pos = (self.asteroid_screen_pos - screen_center) / self.zoom + self.camera_pos;
+
+        // Convert velocity from screen to world
+        let mut world_vel = self.asteroid_screen_vel / self.zoom + self.camera_vel;
+
         // Divide by actual_speed so faster simulation = smaller velocity in world units
         if actual_speed > 0.0 {
-            vel /= actual_speed;
+            world_vel /= actual_speed;
         }
+
         let size = self.asteroid_size;
 
         self.creating_asteroid = false;
+        self.asteroid_growing = false;
         self.asteroid_size = 1.0;
         self.asteroid_hold_time = 0.0;
 
-        (pos, vel, size)
+        (world_pos, world_vel, size)
     }
 
     pub fn update_camera(&mut self, dt: f32) {
@@ -319,5 +356,91 @@ impl FrameBuffer {
         }
 
         self.camera_pos = self.camera_pos + self.camera_vel * dt;
+    }
+
+    pub fn draw_sprite(
+        &mut self,
+        sprite: &RgbaImage,
+        world_pos: Vec2,
+        scale: f32,
+        orientation: f32,
+    ) {
+        let screen_center = vec2(self.width as f32 / 2.0, self.height as f32 / 2.0);
+        let screen_pos = (world_pos - self.camera_pos) * self.zoom + screen_center;
+
+        let (sprite_width, sprite_height) = sprite.dimensions();
+        let scaled_size = scale * self.zoom;
+
+        // Calculate screen space bounding box
+        let half_width = sprite_width as f32 / 2.0 * scaled_size;
+        let half_height = sprite_height as f32 / 2.0 * scaled_size;
+        let max_radius = (half_width * half_width + half_height * half_height).sqrt();
+
+        let min_x = (screen_pos.x - max_radius).floor() as i32;
+        let max_x = (screen_pos.x + max_radius).ceil() as i32;
+        let min_y = (screen_pos.y - max_radius).floor() as i32;
+        let max_y = (screen_pos.y + max_radius).ceil() as i32;
+
+        let cos_angle = orientation.cos();
+        let sin_angle = orientation.sin();
+
+        // Iterate over all screen pixels in the bounding box
+        for screen_y in min_y..=max_y {
+            for screen_x in min_x..=max_x {
+                // Screen pixel offset from sprite center
+                let dx = screen_x as f32 - screen_pos.x;
+                let dy = screen_y as f32 - screen_pos.y;
+
+                // Rotate back to sprite space
+                let sprite_x =
+                    (dx * cos_angle + dy * sin_angle) / scaled_size + sprite_width as f32 / 2.0;
+                let sprite_y =
+                    (-dx * sin_angle + dy * cos_angle) / scaled_size + sprite_height as f32 / 2.0;
+
+                // Check if within sprite bounds
+                if sprite_x < 0.0
+                    || sprite_x >= sprite_width as f32
+                    || sprite_y < 0.0
+                    || sprite_y >= sprite_height as f32
+                {
+                    continue;
+                }
+
+                // Bilinear interpolation
+                let x0 = sprite_x.floor() as u32;
+                let y0 = sprite_y.floor() as u32;
+                let x1 = (x0 + 1).min(sprite_width - 1);
+                let y1 = (y0 + 1).min(sprite_height - 1);
+
+                let fx = sprite_x - x0 as f32;
+                let fy = sprite_y - y0 as f32;
+
+                let p00 = sprite.get_pixel(x0, y0);
+                let p10 = sprite.get_pixel(x1, y0);
+                let p01 = sprite.get_pixel(x0, y1);
+                let p11 = sprite.get_pixel(x1, y1);
+
+                // Interpolate each channel
+                let r = ((p00[0] as f32 * (1.0 - fx) + p10[0] as f32 * fx) * (1.0 - fy)
+                    + (p01[0] as f32 * (1.0 - fx) + p11[0] as f32 * fx) * fy)
+                    as u8;
+                let g = ((p00[1] as f32 * (1.0 - fx) + p10[1] as f32 * fx) * (1.0 - fy)
+                    + (p01[1] as f32 * (1.0 - fx) + p11[1] as f32 * fx) * fy)
+                    as u8;
+                let b = ((p00[2] as f32 * (1.0 - fx) + p10[2] as f32 * fx) * (1.0 - fy)
+                    + (p01[2] as f32 * (1.0 - fx) + p11[2] as f32 * fx) * fy)
+                    as u8;
+                let a = ((p00[3] as f32 * (1.0 - fx) + p10[3] as f32 * fx) * (1.0 - fy)
+                    + (p01[3] as f32 * (1.0 - fx) + p11[3] as f32 * fx) * fy)
+                    as u8;
+
+                if a == 0 {
+                    continue;
+                }
+
+                let color = Color { r, g, b, a };
+                self.set_screen_pixel(screen_x, screen_y, color);
+            }
+        }
     }
 }
