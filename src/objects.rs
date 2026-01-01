@@ -21,6 +21,14 @@ impl Asteroid {
         self.vel
     }
 
+    pub fn set_vel(&mut self, vel: Vec2) {
+        self.vel = vel;
+    }
+
+    pub fn set_pos(&mut self, pos: Vec2) {
+        self.pos = pos;
+    }
+
     pub fn radius(self) -> f32 {
         self.size.sqrt() / PI
     }

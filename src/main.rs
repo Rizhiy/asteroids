@@ -149,7 +149,24 @@ impl RunningState {
             asteroid.draw(&mut self.framebuffer, Color::WHITE);
         }
 
-        // Draw ship
+        // Draw ship engine flame if firing (draw before ship so it appears behind)
+        if self.world.ship.engine_power > 0.0 {
+            let flame_length = 15.0 * self.world.ship.engine_power;
+            let cos_angle = self.world.ship.orientation.cos();
+            let sin_angle = self.world.ship.orientation.sin();
+            let flame_offset = vec2(sin_angle, -cos_angle) * (-10.0 - flame_length / 2.0);
+            let flame_pos = self.world.ship.pos + flame_offset;
+            let flame_color = Color {
+                r: 100,
+                g: 150,
+                b: 255,
+                a: (200.0 * self.world.ship.engine_power) as u8,
+            };
+            self.framebuffer
+                .draw_circle(flame_pos, flame_length / 2.0, flame_color);
+        }
+
+        // Draw ship (only once)
         self.world
             .ship
             .draw(&mut self.framebuffer, &self.ship_sprite);
@@ -204,6 +221,12 @@ impl RunningState {
         let mode_pos = vec2(window_size.width as f32 - mode_text_width - 10.0, 30.0);
         self.framebuffer
             .draw_text(&mode_text, mode_pos, 16.0, Color::WHITE);
+
+        // Draw engine power indicator (bottom left)
+        if self.framebuffer.camera_mode == framebuffer::CameraMode::ShipControl {
+            self.world.ship.draw_engine_indicator(&mut self.framebuffer);
+            self.world.ship.draw_health_bar(&mut self.framebuffer);
+        }
 
         self.framebuffer.render().unwrap();
 
@@ -270,36 +293,33 @@ impl RunningState {
         let elapsed = self.last_update_time.elapsed();
         let update_start = Instant::now();
 
+        let old_camera_pos = self.framebuffer.camera_pos;
+
         match self.framebuffer.camera_mode {
             framebuffer::CameraMode::Manual => {
                 self.framebuffer.update_camera(dt);
             }
             framebuffer::CameraMode::TrackingCenterOfMass => {
-                self.framebuffer.camera_vel = vec2(0.0, 0.0);
                 let center = self.world.calculate_center_of_mass(true);
-                let new_camera_pos = center;
-                self.framebuffer.camera_vel = (new_camera_pos - self.framebuffer.camera_pos) / dt;
-                self.framebuffer.camera_pos = new_camera_pos;
+                self.framebuffer.camera_pos = center;
             }
             framebuffer::CameraMode::ShipControl => {
-                self.framebuffer.camera_vel = vec2(0.0, 0.0);
-
                 // Apply ship controls
-                let mut forward = 0.0;
-                let mut strafe = 0.0;
+                let mut rcs_forward = 0.0;
+                let mut rcs_strafe = 0.0;
                 let mut rotate = 0.0;
 
                 if self.framebuffer.keys_pressed.contains(&KeyCode::KeyW) {
-                    forward += 1.0;
+                    rcs_forward += 1.0;
                 }
                 if self.framebuffer.keys_pressed.contains(&KeyCode::KeyS) {
-                    forward -= 1.0;
+                    rcs_forward -= 1.0;
                 }
                 if self.framebuffer.keys_pressed.contains(&KeyCode::KeyA) {
-                    strafe -= 1.0;
+                    rcs_strafe -= 1.0;
                 }
                 if self.framebuffer.keys_pressed.contains(&KeyCode::KeyD) {
-                    strafe += 1.0;
+                    rcs_strafe += 1.0;
                 }
                 if self.framebuffer.keys_pressed.contains(&KeyCode::KeyQ) {
                     rotate -= 1.0;
@@ -308,10 +328,20 @@ impl RunningState {
                     rotate += 1.0;
                 }
 
-                self.world.ship.apply_control(forward, strafe, rotate, dt);
+                let engine_increase = self.framebuffer.keys_pressed.contains(&KeyCode::ShiftLeft);
+                let engine_decrease = self
+                    .framebuffer
+                    .keys_pressed
+                    .contains(&KeyCode::ControlLeft);
 
-                // Camera follows ship
-                self.framebuffer.camera_pos = self.world.ship.pos;
+                self.world.ship.apply_control(
+                    rcs_forward,
+                    rcs_strafe,
+                    rotate,
+                    engine_increase,
+                    engine_decrease,
+                    dt,
+                );
             }
         }
 
@@ -329,6 +359,14 @@ impl RunningState {
             update_secs = scaled_update_time / effective_speed.max(0.01);
         }
         let update_time = Duration::from_secs_f32(update_secs);
+
+        // Update camera position after world update (for ship control mode)
+        if self.framebuffer.camera_mode == framebuffer::CameraMode::ShipControl {
+            self.framebuffer.camera_pos = self.world.ship.pos;
+        }
+
+        // Update camera velocity after position update
+        self.framebuffer.camera_vel = (self.framebuffer.camera_pos - old_camera_pos) / dt;
 
         self.framebuffer.update_asteroid_size(dt);
 
@@ -467,6 +505,10 @@ impl ApplicationHandler for App {
                                     framebuffer::CameraMode::ShipControl
                                 };
                                 running.stats_changed = true;
+                            }
+
+                            if keycode == KeyCode::KeyX {
+                                running.world.ship.engine_power = 0.0;
                             }
 
                             if keycode == KeyCode::KeyP {

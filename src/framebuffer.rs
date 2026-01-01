@@ -97,7 +97,7 @@ impl FrameBuffer {
             .map_err(|e| format!("{:?}", e))
     }
 
-    fn set_screen_pixel(&mut self, screen_x: i32, screen_y: i32, color: Color) {
+    pub fn set_pixel(&mut self, screen_x: i32, screen_y: i32, color: Color) {
         if screen_x < 0
             || screen_x >= self.width as i32
             || screen_y < 0
@@ -185,7 +185,7 @@ impl FrameBuffer {
                     b: color.b,
                     a: (color.a as f32 * coverage) as u8,
                 };
-                self.set_screen_pixel(center_x + x_offset, center_y + y_offset, aa_color);
+                self.set_pixel(center_x + x_offset, center_y + y_offset, aa_color);
             }
         }
     }
@@ -358,6 +358,70 @@ impl FrameBuffer {
         self.camera_pos = self.camera_pos + self.camera_vel * dt;
     }
 
+    pub fn draw_screen_line(&mut self, p0: Vec2, p1: Vec2, color: Color) {
+        let delta = p1 - p0;
+        let length = delta.length();
+
+        if length < 1.0 {
+            self.set_pixel(p0.x as i32, p0.y as i32, color);
+            return;
+        }
+
+        let dir = delta / length;
+        let num_steps = length.ceil() as i32;
+
+        for i in 0..=num_steps {
+            let t = i as f32;
+            let pos = p0 + dir * t;
+            self.set_pixel(pos.x as i32, pos.y as i32, color);
+        }
+    }
+
+    pub fn draw_screen_triangle(&mut self, p0: Vec2, p1: Vec2, p2: Vec2, color: Color) {
+        // Find bounding box
+        let min_x = p0.x.min(p1.x).min(p2.x).floor() as i32;
+        let max_x = p0.x.max(p1.x).max(p2.x).ceil() as i32;
+        let min_y = p0.y.min(p1.y).min(p2.y).floor() as i32;
+        let max_y = p0.y.max(p1.y).max(p2.y).ceil() as i32;
+
+        // For each pixel in bounding box, check if it's inside the triangle
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let p = vec2(x as f32 + 0.5, y as f32 + 0.5);
+
+                // Barycentric coordinates
+                let v0 = p2 - p0;
+                let v1 = p1 - p0;
+                let v2 = p - p0;
+
+                let dot00 = v0.dot(v0);
+                let dot01 = v0.dot(v1);
+                let dot02 = v0.dot(v2);
+                let dot11 = v1.dot(v1);
+                let dot12 = v1.dot(v2);
+
+                let inv_denom = 1.0 / (dot00 * dot11 - dot01 * dot01);
+                let u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
+                let v = (dot00 * dot12 - dot01 * dot02) * inv_denom;
+
+                // Check if point is inside triangle
+                if u >= 0.0 && v >= 0.0 && u + v <= 1.0 {
+                    self.set_pixel(x, y, color);
+                }
+            }
+        }
+    }
+
+    pub fn draw_screen_rectangle(&mut self, top_left: Vec2, width: f32, height: f32, color: Color) {
+        let top_right = vec2(top_left.x + width, top_left.y);
+        let bottom_left = vec2(top_left.x, top_left.y + height);
+        let bottom_right = vec2(top_left.x + width, top_left.y + height);
+
+        // Draw two triangles to form a rectangle
+        self.draw_screen_triangle(top_left, top_right, bottom_left, color);
+        self.draw_screen_triangle(top_right, bottom_right, bottom_left, color);
+    }
+
     pub fn draw_sprite(
         &mut self,
         sprite: &RgbaImage,
@@ -439,7 +503,7 @@ impl FrameBuffer {
                 }
 
                 let color = Color { r, g, b, a };
-                self.set_screen_pixel(screen_x, screen_y, color);
+                self.set_pixel(screen_x, screen_y, color);
             }
         }
     }
