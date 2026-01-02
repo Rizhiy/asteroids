@@ -1,5 +1,5 @@
 use crate::objects::Asteroid;
-use glam::{vec2, Vec2};
+use glam::{Vec2, vec2};
 
 const RCS_ACCELERATION: f32 = 10.0;
 const MAIN_ENGINE_ACCELERATION: f32 = RCS_ACCELERATION * 100.0;
@@ -8,7 +8,7 @@ const SHIP_ROTATION_SPEED: f32 = 3.0;
 const SHIP_RADIUS: f32 = 10.0;
 const SHIP_MASS: f32 = 100.0;
 const SHIP_MAX_HEALTH: f32 = 10000.0;
-const COLLISION_DAMAGE_THRESHOLD: f32 = 10.0;
+const COLLISION_DAMAGE_THRESHOLD: f32 = 30.0;
 const RESTITUTION: f32 = 0.5;
 const FRICTION_COEFFICIENT: f32 = 0.5;
 
@@ -37,6 +37,18 @@ impl Ship {
 
     pub fn mass(&self) -> f32 {
         SHIP_MASS
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.health <= 0.0
+    }
+
+    pub fn respawn(&mut self, pos: Vec2, vel: Vec2) {
+        self.pos = pos;
+        self.vel = vel;
+        self.health = SHIP_MAX_HEALTH;
+        self.engine_power = 0.0;
+        self.orientation = 0.0;
     }
 
     pub fn update(&mut self, asteroids: &mut Vec<Asteroid>, dt: f32) {
@@ -86,7 +98,7 @@ impl Ship {
                 // Apply damage if relative velocity is high
                 if relative_vel_magnitude > COLLISION_DAMAGE_THRESHOLD {
                     let surplus = relative_vel_magnitude - COLLISION_DAMAGE_THRESHOLD;
-                    self.health -= surplus * surplus * asteroid_mass / total_mass;
+                    self.health -= surplus * asteroid_mass / total_mass;
                 }
 
                 // Separate objects based on their velocities and masses
@@ -112,7 +124,7 @@ impl Ship {
                 // Apply friction for tangential velocity
                 // Calculate tangential component of relative velocity
                 let tangent = Vec2::new(-normal.y, normal.x);
-                let rel_vel_tangent = relative_vel.dot(tangent);
+                let rel_vel_tangent = relative_vel.normalize().dot(tangent);
 
                 // Friction opposes tangential motion, proportional to normal force
                 let normal_force = asteroid_mass * ship_mass / distance;

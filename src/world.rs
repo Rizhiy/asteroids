@@ -55,6 +55,11 @@ impl WorldState {
             // Update ship
             self.ship.update(&mut self.asteroids, tick_duration);
 
+            // Check if ship died and respawn
+            if self.ship.is_dead() {
+                self.respawn_ship();
+            }
+
             self.check_collisions();
             self.cleanup_distant_asteroids();
 
@@ -108,6 +113,25 @@ impl WorldState {
 
     pub fn spawn_asteroid(&mut self, pos: Vec2, vel: Vec2, size: f32) {
         self.asteroids.push(Asteroid::new(pos, vel, size));
+    }
+
+    fn respawn_ship(&mut self) {
+        // Calculate center of mass
+        let center = self.calculate_center_of_mass(true);
+
+        // Calculate total mass for orbital velocity
+        let total_mass: f32 = self.asteroids.iter().map(|a| a.size()).sum();
+
+        // Spawn at a safe distance from center
+        let spawn_distance = 1000.0;
+        let angle = fastrand::f32() * 2.0 * std::f32::consts::PI;
+        let spawn_pos = center + vec2(angle.cos() * spawn_distance, angle.sin() * spawn_distance);
+
+        // Calculate orbital velocity: v = sqrt(M) for F = M / r
+        let orbital_speed = total_mass.sqrt();
+        let spawn_vel = vec2(-angle.sin() * orbital_speed, angle.cos() * orbital_speed);
+
+        self.ship.respawn(spawn_pos, spawn_vel);
     }
 
     pub fn calculate_center_of_mass(&self, weighted: bool) -> Vec2 {
